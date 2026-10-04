@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  telecloud:
+    build: .
+    container_name: telecloud_drive
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./temp:/app/temp
+    environment:
+      - PORT=8000
+      - HOST=0.0.0.0

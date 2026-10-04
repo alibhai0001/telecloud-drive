@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: telecloud-drive
+    env: docker
+    plan: free
+    region: oregon
+    branch: main
+    numInstances: 1
+    healthCheckPath: /
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: HOST
+        value: 0.0.0.0

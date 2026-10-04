@@ -1,0 +1,26 @@
+# Temporary & Large Files
+temp/
+data/
+*.session
+*.session-journal
+
+# Python Cache & Env
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+ENV/
+
+# Secrets
+.env
+.env.local
+
+# Git & Logs
+.git/
+*.log
+.vscode/
+.idea/
+start.bat

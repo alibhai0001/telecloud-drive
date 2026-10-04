@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shared Cloud File | TeleCloud</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            500: '#0088cc',
+                            600: '#0077b5',
+                            700: '#006299',
+                        },
+                        dark: {
+                            bg: '#0f172a',
+                            card: '#1e293b',
+                            border: '#334155',
+                            text: '#f8fafc',
+                            muted: '#94a3b8'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="bg-dark-bg text-dark-text min-h-screen flex flex-col font-sans antialiased selection:bg-brand-500 selection:text-white">
+
+    <!-- Navbar -->
+    <header class="h-16 border-b border-dark-border/80 px-6 flex items-center justify-between bg-dark-bg/60 backdrop-blur-md">
+        <a href="/" class="flex items-center gap-3">
+            <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center text-white shadow-lg shadow-cyan-500/20">
+                <i data-lucide="cloud-lightning" class="w-5 h-5"></i>
+            </div>
+            <div>
+                <h1 class="font-bold text-base text-white leading-tight">TeleCloud</h1>
+                <span class="text-[10px] text-brand-500 font-semibold uppercase tracking-wider">Public Cloud Share</span>
+            </div>
+        </a>
+        <div class="flex items-center gap-2">
+            <span class="px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1.5">
+                <i data-lucide="shield-check" class="w-3.5 h-3.5"></i> Secure Public Link
+            </span>
+        </div>
+    </header>
+
+    <!-- Main Container -->
+    <main class="flex-1 flex flex-col items-center justify-center p-4 sm:p-6 max-w-4xl mx-auto w-full">
+        
+        <!-- Loading State -->
+        <div id="shareLoading" class="text-center py-20 space-y-3">
+            <i data-lucide="loader-2" class="w-10 h-10 text-brand-500 animate-spin mx-auto"></i>
+            <p class="text-sm text-dark-muted font-medium">Loading shared file...</p>
+        </div>
+
+        <!-- Error State -->
+        <div id="shareError" class="hidden text-center py-20 space-y-4 max-w-md bg-dark-card border border-dark-border p-8 rounded-2xl shadow-2xl">
+            <div class="w-16 h-16 rounded-2xl bg-rose-500/10 text-rose-400 flex items-center justify-center mx-auto">
+                <i data-lucide="alert-triangle" class="w-8 h-8"></i>
+            </div>
+            <h2 class="text-xl font-bold text-white">Link Expired or Not Found</h2>
+            <p class="text-xs text-dark-muted">The file you are looking for has been removed, deleted, or the share link has expired.</p>
+            <a href="/" class="inline-flex items-center gap-2 px-5 py-2.5 bg-brand-500 hover:bg-brand-600 text-white text-sm font-semibold rounded-xl shadow-lg">
+                <i data-lucide="hard-drive" class="w-4 h-4"></i> Go to TeleCloud Drive
+            </a>
+        </div>
+
+        <!-- Content Card -->
+        <div id="shareCard" class="hidden w-full bg-dark-card border border-dark-border rounded-3xl overflow-hidden shadow-2xl flex flex-col">
+            
+            <!-- File Header Info -->
+            <div class="p-6 border-b border-dark-border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-slate-900/60">
+                <div class="flex items-center gap-4 overflow-hidden">
+                    <div id="fileIconContainer" class="w-12 h-12 rounded-2xl bg-brand-500/20 text-brand-500 flex items-center justify-center flex-shrink-0">
+                        <i id="fileIcon" data-lucide="file" class="w-6 h-6"></i>
+                    </div>
+                    <div class="overflow-hidden">
+                        <h2 id="fileName" class="text-lg font-bold text-white truncate max-w-lg">File Name</h2>
+                        <div class="flex items-center gap-3 text-xs text-dark-muted mt-1">
+                            <span id="fileSize">0 MB</span>
+                            <span>•</span>
+                            <span id="fileTypeBadge" class="text-slate-300 font-mono">File</span>
+                            <span>•</span>
+                            <span class="text-emerald-400 font-semibold flex items-center gap-1">
+                                <i data-lucide="check-circle-2" class="w-3.5 h-3.5"></i> Telegram Cloud
+                            </span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Download Action Button -->
+                <a id="downloadBtn" href="#" class="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3 rounded-2xl font-bold text-sm bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white shadow-xl shadow-emerald-500/20 transition-all hover:scale-[1.02] active:scale-[0.98] flex-shrink-0">
+                    <i data-lucide="download" class="w-4 h-4"></i> Download File
+                </a>
+            </div>
+
+            <!-- Media Preview Area (Video, Audio, Image, PDF) -->
+            <div id="mediaContainer" class="p-6 bg-black/40 flex items-center justify-center min-h-[350px]">
+                <!-- Injected via JavaScript -->
+            </div>
+
+            <!-- Footer Stats -->
+            <div class="px-6 py-3.5 border-t border-dark-border/80 bg-slate-900/40 flex items-center justify-between text-xs text-dark-muted">
+                <div class="flex items-center gap-2">
+                    <i data-lucide="cloud" class="w-3.5 h-3.5 text-brand-500"></i>
+                    <span>Served with high-speed direct stream</span>
+                </div>
+                <div class="flex items-center gap-4">
+                    <span id="downloadCount">0 downloads</span>
+                </div>
+            </div>
+
+        </div>
+
+    </main>
+
+    <footer class="py-4 border-t border-dark-border/40 text-center text-xs text-dark-muted">
+        TeleCloud • Unlimited Cloud Storage Powered by Telegram
+    </footer>
+
+    <script>
+        const token = window.location.pathname.split('/').pop();
+        
+        async function loadSharedFile() {
+            try {
+                const res = await fetch(`/api/public/${token}/info`);
+                if (!res.ok) throw new Error("File not found");
+                const file = await res.json();
+                
+                document.getElementById('shareLoading').classList.add('hidden');
+                document.getElementById('shareCard').classList.remove('hidden');
+                
+                document.getElementById('fileName').textContent = file.name;
+                document.getElementById('fileSize').textContent = file.human_size;
+                document.getElementById('downloadCount').textContent = `${file.downloads_count || 0} downloads`;
+                document.getElementById('downloadBtn').href = `/api/public/${token}/download`;
+                
+                const streamUrl = `/api/public/${token}/stream`;
+                const mediaContainer = document.getElementById('mediaContainer');
+                const fileIcon = document.getElementById('fileIcon');
+                const fileIconContainer = document.getElementById('fileIconContainer');
+                
+                const mime = file.mime_type || '';
+                const ext = file.name.split('.').pop().toLowerCase();
+                
+                if (mime.startsWith('video/') || ['mp4', 'mkv', 'avi', 'mov', 'webm'].includes(ext)) {
+                    fileIcon.setAttribute('data-lucide', 'film');
+                    fileIconContainer.className = 'w-12 h-12 rounded-2xl bg-rose-500/20 text-rose-400 flex items-center justify-center flex-shrink-0';
+                    document.getElementById('fileTypeBadge').textContent = 'Video Stream';
+                    mediaContainer.innerHTML = `
+                        <video controls autoplay class="max-h-[65vh] w-full rounded-2xl shadow-2xl bg-black">
+                            <source src="${streamUrl}" type="${mime || 'video/mp4'}">
+                            Your browser does not support HTML5 video streaming.
+                        </video>
+                    `;
+                } else if (mime.startsWith('audio/') || ['mp3', 'wav', 'ogg', 'm4a'].includes(ext)) {
+                    fileIcon.setAttribute('data-lucide', 'music');
+                    fileIconContainer.className = 'w-12 h-12 rounded-2xl bg-amber-500/20 text-amber-400 flex items-center justify-center flex-shrink-0';
+                    document.getElementById('fileTypeBadge').textContent = 'Audio Stream';
+                    mediaContainer.innerHTML = `
+                        <div class="w-full max-w-md bg-slate-900 border border-dark-border p-8 rounded-2xl flex flex-col items-center gap-4 text-center">
+                            <div class="w-16 h-16 rounded-2xl bg-amber-500/20 text-amber-400 flex items-center justify-center">
+                                <i data-lucide="music" class="w-8 h-8"></i>
+                            </div>
+                            <p class="font-bold text-white truncate max-w-xs">${file.name}</p>
+                            <audio controls autoplay class="w-full">
+                                <source src="${streamUrl}" type="${mime || 'audio/mp3'}">
+                            </audio>
+                        </div>
+                    `;
+                } else if (mime.startsWith('image/') || ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) {
+                    fileIcon.setAttribute('data-lucide', 'image');
+                    fileIconContainer.className = 'w-12 h-12 rounded-2xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center flex-shrink-0';
+                    document.getElementById('fileTypeBadge').textContent = 'Image Preview';
+                    mediaContainer.innerHTML = `
+                        <img src="${streamUrl}" alt="${file.name}" class="max-h-[65vh] max-w-full rounded-2xl shadow-2xl object-contain">
+                    `;
+                } else if (mime === 'application/pdf' || ext === 'pdf') {
+                    fileIcon.setAttribute('data-lucide', 'file-text');
+                    fileIconContainer.className = 'w-12 h-12 rounded-2xl bg-red-500/20 text-red-400 flex items-center justify-center flex-shrink-0';
+                    document.getElementById('fileTypeBadge').textContent = 'PDF Document';
+                    mediaContainer.innerHTML = `
+                        <iframe src="${streamUrl}" class="w-full h-[65vh] rounded-2xl border border-dark-border bg-white"></iframe>
+                    `;
+                } else {
+                    fileIcon.setAttribute('data-lucide', 'file');
+                    document.getElementById('fileTypeBadge').textContent = 'Direct File';
+                    mediaContainer.innerHTML = `
+                        <div class="text-center py-12 space-y-4">
+                            <div class="w-20 h-20 rounded-3xl bg-slate-800 text-slate-400 mx-auto flex items-center justify-center shadow-xl">
+                                <i data-lucide="download-cloud" class="w-10 h-10 text-brand-500"></i>
+                            </div>
+                            <h3 class="text-base font-semibold text-white">Ready for Download</h3>
+                            <p class="text-xs text-dark-muted">Click the download button above to save this file to your device.</p>
+                        </div>
+                    `;
+                }
+                
+                lucide.createIcons();
+            } catch (err) {
+                document.getElementById('shareLoading').classList.add('hidden');
+                document.getElementById('shareError').classList.remove('hidden');
+                lucide.createIcons();
+            }
+        }
+        
+        loadSharedFile();
+    </script>
+</body>
+</html>
