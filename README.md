@@ -20,13 +20,17 @@ Ek all-in-one powerful system jo **Telegram ke Saved Messages / Bot** ko unlimit
 
 ---
 
-### 🌐 2. Virtual Static Website Hosting
-- Kisi bhi folder me `index.html`, `style.css`, aur `script.js` upload ya create karein.
-- Woh folder automatically ek **Live Website** ban jata hai:
-  - URL: `http://localhost:8000/site/<folder_id>/`
-- Folder header me **🌐 Live Website** button par click karke direct browser me open karein.
-- **1-Click Website Starter:** Folder me **"Host Site Here"** par click karein aur starter template ready!
-- Web pages, portfolio, landing pages, aur documentation host karne ke liye best tool.
+### 🚀 2. TeleCloud Deploy System & Web Hosting Hub
+- **Custom URL Slugs:** Kisi bhi folder ko apne pasandida clean URL slug par deploy karein:
+  - Live URL: `https://your-domain.com/d/<custom-slug>/` (e.g. `/d/my-portfolio/`, `/d/mini-app/`)
+- **1-Click Starter Templates:**
+  - ⚡ **Developer Portfolio:** Dark-mode glassmorphism profile with project showcases and contact form.
+  - 📱 **Telegram Mini-App (WebApp):** Native Telegram SDK preconfigured (`Telegram.WebApp.ready()`, MainButton, haptics, and live Telegram user profile readout).
+  - 🔗 **Link-in-Bio (Linktree style):** Sleek social profile with animated avatar glow and verified badge.
+  - 🎮 **HTML5 Retro Game (Galaxy Defender):** Playable 60 FPS space shooter with touch controls and keyboard support.
+- **📦 Deploy from ZIP Archive:** Kisi bhi static website ka `.zip` upload karein — TeleCloud usey auto-extract karke Telegram Cloud me upload karega aur instantly live URL par host kar dega!
+- **Real-Time Analytics:** Har deployment ke liye real-time visitor count (`👁️ views`) track hota hai.
+- **Live Code Sync:** Folder me koi bhi file create ya edit karne par live website bina restart kiye instantly update ho jati hai.
 
 ---
 
@@ -36,12 +40,14 @@ Jab aap apna Telegram connect karte hain (Bot Token ya Account se), bot backgrou
 - 🌐 **Telegram Mini App (WebApp):** Bot ke `/start` message me **"Open Web Drive"** button par click karke Telegram ke andar hi poora Drive open karein.
 - **Bot Commands:**
   - `/start` - Welcome card, live storage stats, aur WebApp link.
+  - `/deploy <folder> [slug]` - 🚀 Telegram se hi kisi folder ko live website bana kar deploy karein.
+  - `/deployments` ya `/sites` - Sabhi live deployed websites aur Mini-Apps ki list dekhein with direct preview links.
+  - `/undeploy <slug>` - Kisi website deployment ko unpublish / delete karein.
   - `/folders` - Sabhi folders ki list aur active upload folder select karein.
   - `/createfolder <name>` - Telegram se hi naya folder banayein.
   - `/files` - Folder ki files browse karein with direct stream & download links.
   - `/search <query>` - Files aur folders instantly search karein.
   - `/stats` - Total storage size aur file counts dekhein.
-  - `/websites` - Sabhi hosted websites ki list aur direct links dekhein.
   - `/setfolder <id>` - Incoming files ke liye target folder set karein.
   - `/resetfolder` - Target folder ko Root par reset karein.
 

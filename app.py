@@ -1,6 +1,7 @@
 import os
 import re
 import io
+import secrets
 import zipfile
 import asyncio
 import logging
@@ -100,6 +101,18 @@ class AuthBotLoginRequest(BaseModel):
 
 class SettingsUpdate(BaseModel):
     gdrive_cookie: Optional[str] = None
+
+class DeploymentCreate(BaseModel):
+    name: str
+    slug: str
+    folder_id: int
+    type: Optional[str] = "static_website"
+
+class StarterDeployRequest(BaseModel):
+    name: str
+    slug: str
+    template_type: str = "portfolio"  # 'portfolio', 'tg_mini_app', 'bio_link', 'retro_game', 'landing'
+    parent_id: Optional[int] = None
 
 # ----------------- Auth Endpoints -----------------
 @app.get("/api/auth/status")
@@ -806,6 +819,813 @@ async def serve_static_website(folder_id: int, subpath: str = ""):
         mime_type = "text/css; charset=utf-8"
     elif file_data["name"].endswith(".js"):
         mime_type = "application/javascript; charset=utf-8"
+
+    headers = {
+        "Content-Length": str(file_size),
+        "Content-Type": mime_type,
+        "Cache-Control": "public, max-age=300"
+    }
+
+    stream_gen = telegram_service.stream_file(
+        message_id=file_data["telegram_msg_id"],
+        chat_id=file_data["telegram_chat_id"],
+        offset=0,
+        length=file_size
+    )
+    return StreamingResponse(stream_gen, headers=headers, media_type=mime_type)
+
+# ----------------- Deployments & Starter Templates -----------------
+def generate_starter_template_files(template_type: str, title: str) -> List[Dict[str, Any]]:
+    clean_title = title.strip() or "My Project"
+    
+    if template_type == "tg_mini_app":
+        index_html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>{clean_title} | Telegram Mini App</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col font-sans p-4 selection:bg-cyan-500 selection:text-white">
+    <div class="max-w-md w-full mx-auto space-y-4 pt-2">
+        <div class="bg-slate-900/80 backdrop-blur-xl border border-slate-800 p-5 rounded-2xl shadow-xl flex items-center gap-3.5">
+            <div class="w-12 h-12 rounded-xl bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center text-white text-xl font-bold shadow-lg shadow-cyan-500/20">
+                🚀
+            </div>
+            <div>
+                <h1 class="text-lg font-bold text-white leading-tight">{clean_title}</h1>
+                <p class="text-xs text-cyan-400 font-medium">Telegram Mini App</p>
+            </div>
+        </div>
+
+        <div class="bg-slate-900/80 backdrop-blur-xl border border-slate-800 p-5 rounded-2xl shadow-xl space-y-3">
+            <div class="flex items-center gap-3">
+                <div id="userAvatar" class="w-10 h-10 rounded-full bg-cyan-500/20 border border-cyan-500/40 text-cyan-400 flex items-center justify-center font-bold text-sm">
+                    TG
+                </div>
+                <div>
+                    <h3 id="userName" class="text-sm font-bold text-white">Loading user...</h3>
+                    <p id="userHandle" class="text-xs text-slate-400">@telegram_user</p>
+                </div>
+            </div>
+            <div class="pt-2 border-t border-slate-800/80 grid grid-cols-2 gap-2 text-xs text-slate-300">
+                <div class="bg-slate-950/60 p-2 rounded-lg border border-slate-800">
+                    <span class="text-slate-500 block text-[10px]">PLATFORM</span>
+                    <span id="tgPlatform" class="font-semibold text-white">Telegram Web</span>
+                </div>
+                <div class="bg-slate-950/60 p-2 rounded-lg border border-slate-800">
+                    <span class="text-slate-500 block text-[10px]">COLOR SCHEME</span>
+                    <span id="tgScheme" class="font-semibold text-cyan-400 capitalize">Dark</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-slate-900/80 backdrop-blur-xl border border-slate-800 p-5 rounded-2xl shadow-xl space-y-3">
+            <h2 class="text-xs font-bold text-slate-400 uppercase tracking-wider">Mini App Actions</h2>
+            <div class="grid grid-cols-2 gap-2.5">
+                <button onclick="triggerHaptic('light')" class="p-3 bg-slate-800 hover:bg-slate-750 border border-slate-700 rounded-xl text-xs font-semibold text-white transition-all active:scale-95 flex flex-col items-center gap-1.5">
+                    <span class="text-base">📳</span>
+                    <span>Light Haptic</span>
+                </button>
+                <button onclick="triggerHaptic('heavy')" class="p-3 bg-slate-800 hover:bg-slate-750 border border-slate-700 rounded-xl text-xs font-semibold text-white transition-all active:scale-95 flex flex-col items-center gap-1.5">
+                    <span class="text-base">💥</span>
+                    <span>Heavy Impact</span>
+                </button>
+                <button onclick="toggleMainButton()" class="p-3 bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 rounded-xl text-xs font-semibold text-cyan-300 transition-all active:scale-95 flex flex-col items-center gap-1.5">
+                    <span class="text-base">🔘</span>
+                    <span>Toggle MainBtn</span>
+                </button>
+                <button onclick="sendDataToBot()" class="p-3 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 rounded-xl text-xs font-semibold text-emerald-300 transition-all active:scale-95 flex flex-col items-center gap-1.5">
+                    <span class="text-base">📤</span>
+                    <span>Send Data</span>
+                </button>
+            </div>
+        </div>
+
+        <div class="text-center text-[11px] text-slate-500 space-y-1">
+            <p>Hosted on <span class="text-slate-400 font-medium">TeleCloud</span> via Telegram Cloud</p>
+            <p class="font-mono text-[10px]" id="versionBadge">SDK v?.?</p>
+        </div>
+    </div>
+    <script src="app.js"></script>
+</body>
+</html>"""
+
+        style_css = """:root {
+    --tg-bg: var(--tg-theme-bg-color, #0f172a);
+    --tg-text: var(--tg-theme-text-color, #f8fafc);
+    --tg-btn: var(--tg-theme-button-color, #0088cc);
+    --tg-btn-text: var(--tg-theme-button-text-color, #ffffff);
+}
+body {
+    background-color: var(--tg-bg);
+    color: var(--tg-text);
+}"""
+
+        app_js = """const tg = window.Telegram?.WebApp;
+document.addEventListener('DOMContentLoaded', () => {
+    if (tg) {
+        tg.ready();
+        tg.expand();
+        const user = tg.initDataUnsafe?.user;
+        if (user) {
+            document.getElementById('userName').textContent = `${user.first_name || ''} ${user.last_name || ''}`.trim() || 'Telegram User';
+            document.getElementById('userHandle').textContent = user.username ? `@${user.username}` : `ID: ${user.id}`;
+            document.getElementById('userAvatar').textContent = (user.first_name || 'T')[0].toUpperCase();
+        } else {
+            document.getElementById('userName').textContent = 'Guest User (Browser)';
+            document.getElementById('userHandle').textContent = 'Open in Telegram for full SDK';
+        }
+        document.getElementById('tgPlatform').textContent = tg.platform || 'web';
+        document.getElementById('tgScheme').textContent = tg.colorScheme || 'dark';
+        document.getElementById('versionBadge').textContent = `Telegram WebApp SDK v${tg.version || '6.0'}`;
+        tg.MainButton.setText('✨ CONFIRM ACTION');
+        tg.MainButton.onClick(() => {
+            triggerHaptic('heavy');
+            tg.showAlert('You clicked the native Telegram MainButton!');
+        });
+    }
+});
+
+function triggerHaptic(style) {
+    if (tg?.HapticFeedback) {
+        tg.HapticFeedback.impactOccurred(style === 'heavy' ? 'heavy' : 'light');
+    }
+}
+
+let mainBtnVisible = false;
+function toggleMainButton() {
+    if (!tg) return;
+    triggerHaptic('light');
+    mainBtnVisible = !mainBtnVisible;
+    if (mainBtnVisible) tg.MainButton.show();
+    else tg.MainButton.hide();
+}
+
+function sendDataToBot() {
+    if (tg) {
+        triggerHaptic('heavy');
+        tg.showConfirm('Do you want to send action data to the bot?', (confirmed) => {
+            if (confirmed) tg.sendData(JSON.stringify({ action: 'user_action', timestamp: Date.now() }));
+        });
+    } else {
+        alert('Send data is available when opened inside Telegram client.');
+    }
+}"""
+        return [
+            {"name": "index.html", "content": index_html, "mime": "text/html"},
+            {"name": "style.css", "content": style_css, "mime": "text/css"},
+            {"name": "app.js", "content": app_js, "mime": "application/javascript"},
+        ]
+
+    elif template_type == "bio_link":
+        index_html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{clean_title} | Links</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="bg-[#0b0f19] text-slate-100 min-h-screen flex items-center justify-center p-4 font-sans selection:bg-purple-500 selection:text-white">
+    <div class="max-w-sm w-full space-y-6 text-center">
+        <div class="space-y-3">
+            <div class="relative w-24 h-24 mx-auto">
+                <div class="w-full h-full rounded-full bg-gradient-to-tr from-purple-500 via-pink-500 to-amber-400 p-1 shadow-xl shadow-purple-500/20 animate-pulse">
+                    <div class="w-full h-full rounded-full bg-slate-900 flex items-center justify-center text-3xl font-bold text-white">
+                        ✨
+                    </div>
+                </div>
+            </div>
+            <div>
+                <h1 class="text-xl font-extrabold text-white flex items-center justify-center gap-1.5">
+                    <span>{clean_title}</span>
+                    <span class="text-cyan-400 text-sm">✓</span>
+                </h1>
+                <p class="text-xs text-slate-400 mt-1">Creator • Developer • Cloud Explorer</p>
+            </div>
+        </div>
+
+        <div class="space-y-3">
+            <a href="https://t.me/" target="_blank" class="flex items-center justify-between p-4 rounded-2xl bg-slate-900/80 border border-slate-800 hover:border-cyan-500/50 hover:bg-slate-800 text-white font-medium text-sm transition-all hover:scale-[1.02] shadow-lg group">
+                <span class="flex items-center gap-3">
+                    <span class="text-lg">📢</span>
+                    <span>Telegram Channel</span>
+                </span>
+                <span class="text-slate-500 group-hover:text-cyan-400 transition-colors">→</span>
+            </a>
+
+            <a href="https://github.com/" target="_blank" class="flex items-center justify-between p-4 rounded-2xl bg-slate-900/80 border border-slate-800 hover:border-purple-500/50 hover:bg-slate-800 text-white font-medium text-sm transition-all hover:scale-[1.02] shadow-lg group">
+                <span class="flex items-center gap-3">
+                    <span class="text-lg">🐙</span>
+                    <span>GitHub Repositories</span>
+                </span>
+                <span class="text-slate-500 group-hover:text-purple-400 transition-colors">→</span>
+            </a>
+
+            <a href="https://youtube.com/" target="_blank" class="flex items-center justify-between p-4 rounded-2xl bg-slate-900/80 border border-slate-800 hover:border-red-500/50 hover:bg-slate-800 text-white font-medium text-sm transition-all hover:scale-[1.02] shadow-lg group">
+                <span class="flex items-center gap-3">
+                    <span class="text-lg">🎬</span>
+                    <span>YouTube Videos</span>
+                </span>
+                <span class="text-slate-500 group-hover:text-red-400 transition-colors">→</span>
+            </a>
+
+            <button onclick="shareProfile()" class="w-full flex items-center justify-between p-4 rounded-2xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-semibold text-sm transition-all hover:scale-[1.02] shadow-lg shadow-cyan-500/20">
+                <span class="flex items-center gap-3">
+                    <span class="text-lg">🔗</span>
+                    <span>Share This Page</span>
+                </span>
+                <span>↗</span>
+            </button>
+        </div>
+
+        <p class="text-[11px] text-slate-500">Hosted with TeleCloud Drive</p>
+    </div>
+    <script>
+        function shareProfile() {{
+            if (navigator.share) {{
+                navigator.share({{ title: '{clean_title}', url: window.location.href }});
+            }} else {{
+                navigator.clipboard.writeText(window.location.href);
+                alert('Link copied to clipboard!');
+            }}
+        }}
+    </script>
+</body>
+</html>"""
+        return [
+            {"name": "index.html", "content": index_html, "mime": "text/html"},
+            {"name": "style.css", "content": "/* Bio Link Custom styles */", "mime": "text/css"},
+        ]
+
+    elif template_type == "retro_game":
+        index_html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>{clean_title} | Galaxy Defender</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="bg-black text-white min-h-screen flex flex-col items-center justify-center font-sans overflow-hidden select-none">
+    <div class="relative max-w-lg w-full flex flex-col items-center p-3">
+        <div class="w-full flex items-center justify-between px-4 py-2 bg-slate-900/80 border border-slate-800 rounded-xl mb-3 text-xs font-mono">
+            <div>SCORE: <span id="scoreVal" class="text-cyan-400 font-bold text-sm">0</span></div>
+            <div>HIGH: <span id="highScoreVal" class="text-amber-400 font-bold text-sm">0</span></div>
+            <div>LIVES: <span id="livesVal" class="text-rose-400 font-bold text-sm">❤️❤️❤️</span></div>
+        </div>
+
+        <div class="relative border-2 border-cyan-500/40 rounded-2xl overflow-hidden shadow-2xl shadow-cyan-500/10">
+            <canvas id="gameCanvas" width="360" height="480" class="bg-[#050814] block"></canvas>
+            
+            <div id="gameOverlay" class="absolute inset-0 bg-black/85 backdrop-blur-sm flex flex-col items-center justify-center p-6 text-center space-y-4">
+                <h1 class="text-2xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-purple-400 font-mono tracking-wider">GALAXY DEFENDER</h1>
+                <p class="text-xs text-slate-300 max-w-xs">Use Left/Right keys or buttons below to dodge & shoot alien invaders!</p>
+                <button onclick="startGame()" class="px-6 py-3 bg-gradient-to-r from-cyan-500 to-blue-600 rounded-xl font-bold text-sm hover:scale-105 transition-all shadow-lg shadow-cyan-500/30">
+                    PLAY NOW 🚀
+                </button>
+            </div>
+        </div>
+
+        <div class="w-full max-w-xs grid grid-cols-3 gap-3 mt-4">
+            <button id="btnLeft" class="p-4 bg-slate-900 active:bg-slate-700 border border-slate-800 rounded-xl text-xl flex items-center justify-center active:scale-95">◀</button>
+            <button id="btnFire" class="p-4 bg-rose-600 active:bg-rose-500 rounded-xl font-bold text-sm flex items-center justify-center active:scale-95 shadow-lg shadow-rose-600/30">FIRE 🎯</button>
+            <button id="btnRight" class="p-4 bg-slate-900 active:bg-slate-700 border border-slate-800 rounded-xl text-xl flex items-center justify-center active:scale-95">▶</button>
+        </div>
+    </div>
+    <script src="game.js"></script>
+</body>
+</html>"""
+
+        game_js = """const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+let score = 0;
+let highScore = parseInt(localStorage.getItem('galaxy_high_score') || '0');
+let lives = 3;
+let gameOver = true;
+const player = { x: 160, y: 430, w: 32, h: 32, speed: 6, dx: 0 };
+let bullets = [];
+let enemies = [];
+let particles = [];
+let lastSpawn = 0;
+document.getElementById('highScoreVal').textContent = highScore;
+
+let audioCtx = null;
+function playSound(freq, type = 'sine', duration = 0.1) {
+    try {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+        gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + duration);
+    } catch(e) {}
+}
+
+function startGame() {
+    score = 0;
+    lives = 3;
+    bullets = [];
+    enemies = [];
+    particles = [];
+    player.x = 160;
+    gameOver = false;
+    document.getElementById('gameOverlay').classList.add('hidden');
+    document.getElementById('scoreVal').textContent = '0';
+    document.getElementById('livesVal').textContent = '❤️❤️❤️';
+    lastSpawn = performance.now();
+    requestAnimationFrame(gameLoop);
+}
+
+function shoot() {
+    if (gameOver) return;
+    bullets.push({ x: player.x + player.w/2 - 2, y: player.y, w: 4, h: 10, speed: 8 });
+    playSound(600, 'square', 0.08);
+}
+
+window.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowLeft' || e.key === 'a') player.dx = -player.speed;
+    if (e.key === 'ArrowRight' || e.key === 'd') player.dx = player.speed;
+    if (e.key === ' ' || e.key === 'ArrowUp') shoot();
+});
+window.addEventListener('keyup', (e) => {
+    if (['ArrowLeft', 'a', 'ArrowRight', 'd'].includes(e.key)) player.dx = 0;
+});
+
+const btnLeft = document.getElementById('btnLeft');
+const btnRight = document.getElementById('btnRight');
+const btnFire = document.getElementById('btnFire');
+if (btnLeft && btnRight && btnFire) {
+    btnLeft.addEventListener('touchstart', (e) => { e.preventDefault(); player.dx = -player.speed; });
+    btnLeft.addEventListener('touchend', () => { player.dx = 0; });
+    btnRight.addEventListener('touchstart', (e) => { e.preventDefault(); player.dx = player.speed; });
+    btnRight.addEventListener('touchend', () => { player.dx = 0; });
+    btnFire.addEventListener('touchstart', (e) => { e.preventDefault(); shoot(); });
+    btnLeft.addEventListener('mousedown', () => { player.dx = -player.speed; });
+    btnLeft.addEventListener('mouseup', () => { player.dx = 0; });
+    btnRight.addEventListener('mousedown', () => { player.dx = player.speed; });
+    btnRight.addEventListener('mouseup', () => { player.dx = 0; });
+    btnFire.addEventListener('mousedown', () => { shoot(); });
+}
+
+function createExplosion(x, y, color = '#38bdf8') {
+    for (let i = 0; i < 12; i++) {
+        particles.push({
+            x, y,
+            vx: (Math.random() - 0.5) * 6,
+            vy: (Math.random() - 0.5) * 6,
+            life: 20,
+            color
+        });
+    }
+}
+
+function gameLoop(now) {
+    if (gameOver) return;
+    ctx.fillStyle = '#050814';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    player.x += player.dx;
+    if (player.x < 0) player.x = 0;
+    if (player.x > canvas.width - player.w) player.x = canvas.width - player.w;
+
+    ctx.fillStyle = '#38bdf8';
+    ctx.beginPath();
+    ctx.moveTo(player.x + player.w/2, player.y);
+    ctx.lineTo(player.x + player.w, player.y + player.h);
+    ctx.lineTo(player.x, player.y + player.h);
+    ctx.closePath();
+    ctx.fill();
+
+    if (now - lastSpawn > 800) {
+        enemies.push({
+            x: Math.random() * (canvas.width - 30),
+            y: -20,
+            w: 24,
+            h: 24,
+            speed: 2 + Math.random() * 2
+        });
+        lastSpawn = now;
+    }
+
+    for (let i = bullets.length - 1; i >= 0; i--) {
+        const b = bullets[i];
+        b.y -= b.speed;
+        ctx.fillStyle = '#f43f5e';
+        ctx.fillRect(b.x, b.y, b.w, b.h);
+        if (b.y < 0) bullets.splice(i, 1);
+    }
+
+    for (let i = enemies.length - 1; i >= 0; i--) {
+        const en = enemies[i];
+        en.y += en.speed;
+        ctx.fillStyle = '#a855f7';
+        ctx.fillRect(en.x, en.y, en.w, en.h);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(en.x + 4, en.y + 6, 4, 4);
+        ctx.fillRect(en.x + 16, en.y + 6, 4, 4);
+
+        for (let j = bullets.length - 1; j >= 0; j--) {
+            const b = bullets[j];
+            if (b.x < en.x + en.w && b.x + b.w > en.x && b.y < en.y + en.h && b.y + b.h > en.y) {
+                createExplosion(en.x + en.w/2, en.y + en.h/2, '#a855f7');
+                playSound(300, 'sawtooth', 0.15);
+                enemies.splice(i, 1);
+                bullets.splice(j, 1);
+                score += 10;
+                document.getElementById('scoreVal').textContent = score;
+                if (score > highScore) {
+                    highScore = score;
+                    localStorage.setItem('galaxy_high_score', highScore);
+                    document.getElementById('highScoreVal').textContent = highScore;
+                }
+                break;
+            }
+        }
+
+        if (en.y > canvas.height) {
+            enemies.splice(i, 1);
+            lives--;
+            document.getElementById('livesVal').textContent = '❤️'.repeat(Math.max(0, lives));
+            if (lives <= 0) {
+                gameOver = true;
+                playSound(150, 'sawtooth', 0.4);
+                document.getElementById('gameOverlay').classList.remove('hidden');
+                return;
+            }
+        }
+    }
+
+    for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.x += p.vx;
+        p.y += p.vy;
+        p.life--;
+        ctx.fillStyle = p.color;
+        ctx.fillRect(p.x, p.y, 2, 2);
+        if (p.life <= 0) particles.splice(i, 1);
+    }
+    requestAnimationFrame(gameLoop);
+}"""
+        return [
+            {"name": "index.html", "content": index_html, "mime": "text/html"},
+            {"name": "style.css", "content": "/* Galaxy Defender styles */", "mime": "text/css"},
+            {"name": "game.js", "content": game_js, "mime": "application/javascript"},
+        ]
+
+    else:
+        index_html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{clean_title} | Portfolio</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen font-sans selection:bg-cyan-500 selection:text-white">
+    <nav class="border-b border-slate-800 bg-slate-900/60 backdrop-blur-md sticky top-0 z-30 px-6 py-4 flex items-center justify-between max-w-5xl mx-auto">
+        <div class="font-bold text-lg text-white flex items-center gap-2">
+            <span class="w-8 h-8 rounded-lg bg-cyan-500 flex items-center justify-center text-white text-sm">⚡</span>
+            <span>{clean_title}</span>
+        </div>
+        <div class="flex items-center gap-4 text-xs font-semibold">
+            <a href="#projects" class="text-slate-300 hover:text-white transition-colors">Projects</a>
+            <a href="#skills" class="text-slate-300 hover:text-white transition-colors">Skills</a>
+            <a href="#contact" class="px-3.5 py-1.5 rounded-lg bg-cyan-500 hover:bg-cyan-600 text-white transition-all shadow-lg shadow-cyan-500/20">Contact</a>
+        </div>
+    </nav>
+
+    <header class="max-w-4xl mx-auto px-6 pt-20 pb-16 text-center space-y-6">
+        <div class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 text-xs font-semibold">
+            <span>🚀 Live on TeleCloud</span>
+        </div>
+        <h1 class="text-4xl sm:text-5xl font-extrabold text-white leading-tight tracking-tight">
+            Building the Future with <span class="text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 via-blue-500 to-indigo-500">Fast & Modern Code</span>
+        </h1>
+        <p class="text-slate-400 text-base max-w-xl mx-auto leading-relaxed">
+            Full-stack developer specializing in scalable cloud storage architectures, Telegram Bots, and modern reactive web applications.
+        </p>
+        <div class="flex items-center justify-center gap-3 pt-2">
+            <a href="#projects" class="px-6 py-3 rounded-xl bg-cyan-500 hover:bg-cyan-600 text-white font-semibold text-sm shadow-xl shadow-cyan-500/25 transition-all hover:scale-105">View My Work</a>
+            <a href="#contact" class="px-6 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-200 font-semibold text-sm transition-all">Get in Touch</a>
+        </div>
+    </header>
+
+    <section id="projects" class="max-w-5xl mx-auto px-6 py-12 space-y-6">
+        <h2 class="text-2xl font-bold text-white">Featured Projects</h2>
+        <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
+            <div class="p-6 rounded-2xl bg-slate-900/60 border border-slate-800 hover:border-cyan-500/40 transition-all hover:scale-[1.02] shadow-xl space-y-3">
+                <div class="text-2xl">⚡</div>
+                <h3 class="font-bold text-white text-base">TeleCloud Drive</h3>
+                <p class="text-xs text-slate-400">Unlimited Cloud Storage with virtual static hosting backed by Telegram MTProto.</p>
+                <div class="flex gap-1.5 pt-2 flex-wrap">
+                    <span class="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-cyan-400 font-mono">FastAPI</span>
+                    <span class="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-cyan-400 font-mono">Telethon</span>
+                </div>
+            </div>
+
+            <div class="p-6 rounded-2xl bg-slate-900/60 border border-slate-800 hover:border-purple-500/40 transition-all hover:scale-[1.02] shadow-xl space-y-3">
+                <div class="text-2xl">🤖</div>
+                <h3 class="font-bold text-white text-base">AI Assistant Bot</h3>
+                <p class="text-xs text-slate-400">Intelligent Telegram bot with multimodal capabilities and context caching.</p>
+                <div class="flex gap-1.5 pt-2 flex-wrap">
+                    <span class="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-purple-400 font-mono">Python</span>
+                    <span class="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-purple-400 font-mono">Gemini API</span>
+                </div>
+            </div>
+
+            <div class="p-6 rounded-2xl bg-slate-900/60 border border-slate-800 hover:border-emerald-500/40 transition-all hover:scale-[1.02] shadow-xl space-y-3">
+                <div class="text-2xl">📱</div>
+                <h3 class="font-bold text-white text-base">Mini Apps Hub</h3>
+                <p class="text-xs text-slate-400">Responsive Telegram WebApps ecosystem with haptic feedback and real-time sync.</p>
+                <div class="flex gap-1.5 pt-2 flex-wrap">
+                    <span class="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-emerald-400 font-mono">JavaScript</span>
+                    <span class="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-emerald-400 font-mono">Tailwind</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <footer id="contact" class="border-t border-slate-800 py-8 text-center text-xs text-slate-500">
+        <p>© 2026 {clean_title}. Hosted directly from Telegram Cloud via TeleCloud.</p>
+    </footer>
+    <script src="script.js"></script>
+</body>
+</html>"""
+
+        script_js = """console.log('Portfolio loaded successfully!');"""
+        return [
+            {"name": "index.html", "content": index_html, "mime": "text/html"},
+            {"name": "style.css", "content": "/* Portfolio Styles */", "mime": "text/css"},
+            {"name": "script.js", "content": script_js, "mime": "application/javascript"},
+        ]
+
+# ----------------- Deployments API Endpoints -----------------
+@app.get("/api/deployments")
+async def list_deployments():
+    """List all deployed websites and mini apps"""
+    deps = await database.get_all_deployments()
+    custom_url = os.getenv("PUBLIC_URL") or os.getenv("WEBAPP_URL") or ""
+    custom_url = custom_url.rstrip("/")
+    for d in deps:
+        d["live_url"] = f"/d/{d['slug']}"
+        d["full_url"] = f"{custom_url}/d/{d['slug']}" if custom_url else f"/d/{d['slug']}"
+    return deps
+
+@app.post("/api/deployments")
+async def create_deployment_endpoint(req: DeploymentCreate):
+    """Deploy a website from an existing cloud folder"""
+    folder = await database.get_folder(req.folder_id)
+    if not folder:
+        raise HTTPException(status_code=404, detail="Folder not found")
+
+    dep = await database.create_deployment(req.name, req.slug, req.folder_id, req.type or "static_website")
+    return {
+        "success": True,
+        "deployment": dep,
+        "live_url": f"/d/{dep['slug']}"
+    }
+
+@app.get("/api/deployments/folder/{folder_id}")
+async def get_folder_deployment(folder_id: int):
+    """Check if folder is already deployed"""
+    dep = await database.get_deployment_by_folder_id(folder_id)
+    if not dep:
+        return {"deployed": False, "deployment": None}
+    return {
+        "deployed": True,
+        "deployment": dep,
+        "live_url": f"/d/{dep['slug']}"
+    }
+
+@app.delete("/api/deployments/{dep_id}")
+async def delete_deployment_endpoint(dep_id: str):
+    """Unpublish / delete a deployment"""
+    deleted = await database.delete_deployment(dep_id)
+    return {"success": deleted}
+
+@app.post("/api/deployments/create-starter")
+async def create_starter_deployment(req: StarterDeployRequest):
+    """1-Click Create & Deploy Starter Template (Mini App, Portfolio, Bio Link, Game)"""
+    auth = await telegram_service.get_auth_status()
+    if not auth.get("authorized"):
+        raise HTTPException(status_code=401, detail="Telegram is not connected. Please connect in settings.")
+
+    # Create folder
+    folder = await database.create_folder(req.name.strip(), req.parent_id)
+    folder_id = folder["id"]
+
+    # Generate template files
+    files = generate_starter_template_files(req.template_type, req.name)
+
+    for f_item in files:
+        fname = f_item["name"]
+        content_bytes = f_item["content"].encode("utf-8")
+        mime = f_item["mime"]
+
+        upload_res = await telegram_service.upload_bytes(content_bytes, fname, chat_id="me")
+        await database.add_file(
+            name=fname,
+            size=len(content_bytes),
+            mime_type=mime,
+            folder_id=folder_id,
+            telegram_msg_id=upload_res["message_id"],
+            telegram_chat_id=upload_res["chat_id"]
+        )
+
+    # Create deployment
+    dep = await database.create_deployment(req.name, req.slug, folder_id, req.template_type)
+    return {
+        "success": True,
+        "deployment": dep,
+        "folder_id": folder_id,
+        "live_url": f"/d/{dep['slug']}",
+        "message": f"Starter template '{req.name}' created and deployed live!"
+    }
+
+@app.post("/api/deployments/from-zip")
+async def deploy_from_zip(
+    zip_file: UploadFile = File(...),
+    name: Optional[str] = Form(None),
+    slug: Optional[str] = Form(None),
+    parent_id: Optional[int] = Form(None)
+):
+    """Deploy website directly by uploading a ZIP archive"""
+    auth = await telegram_service.get_auth_status()
+    if not auth.get("authorized"):
+        raise HTTPException(status_code=401, detail="Telegram is not connected. Please connect in settings.")
+
+    content = await zip_file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
+    try:
+        zip_buffer = io.BytesIO(content)
+        with zipfile.ZipFile(zip_buffer, "r") as z:
+            namelist = z.namelist()
+            if not namelist:
+                raise HTTPException(status_code=400, detail="ZIP archive is empty.")
+
+            project_name = (name or Path(zip_file.filename or "my-website").stem).strip()
+            folder = await database.create_folder(project_name, parent_id)
+            folder_id = folder["id"]
+
+            dir_map = {"": folder_id}
+
+            for item in sorted(namelist):
+                if item.endswith("/"):
+                    parts = [p for p in item.strip("/").split("/") if p]
+                    curr_parent = folder_id
+                    curr_path = ""
+                    for p in parts:
+                        curr_path = f"{curr_path}/{p}" if curr_path else p
+                        if curr_path not in dir_map:
+                            sub_folder = await database.create_folder(p, curr_parent)
+                            dir_map[curr_path] = sub_folder["id"]
+                        curr_parent = dir_map[curr_path]
+
+            for item in namelist:
+                if item.endswith("/") or item.startswith("__MACOSX") or item.endswith(".DS_Store"):
+                    continue
+                file_bytes = z.read(item)
+                item_path = Path(item)
+                fname = item_path.name
+                parent_dir_path = "/".join(item.split("/")[:-1])
+                target_folder_id = dir_map.get(parent_dir_path, folder_id)
+
+                if parent_dir_path and parent_dir_path not in dir_map:
+                    parts = [p for p in parent_dir_path.split("/") if p]
+                    curr_parent = folder_id
+                    curr_path = ""
+                    for p in parts:
+                        curr_path = f"{curr_path}/{p}" if curr_path else p
+                        if curr_path not in dir_map:
+                            sub_folder = await database.create_folder(p, curr_parent)
+                            dir_map[curr_path] = sub_folder["id"]
+                        curr_parent = dir_map[curr_path]
+                    target_folder_id = dir_map[parent_dir_path]
+
+                mime_type, _ = mimetypes.guess_type(fname)
+                mime_type = mime_type or "application/octet-stream"
+
+                upload_res = await telegram_service.upload_bytes(file_bytes, fname, chat_id="me")
+                await database.add_file(
+                    name=fname,
+                    size=len(file_bytes),
+                    mime_type=mime_type,
+                    folder_id=target_folder_id,
+                    telegram_msg_id=upload_res["message_id"],
+                    telegram_chat_id=upload_res["chat_id"]
+                )
+
+            dep_slug = slug or re.sub(r'[^a-zA-Z0-9_-]', '-', project_name.lower()).strip('-') or f"site-{secrets.token_hex(3)}"
+            dep = await database.create_deployment(project_name, dep_slug, folder_id)
+            return {
+                "success": True,
+                "deployment": dep,
+                "folder_id": folder_id,
+                "live_url": f"/d/{dep['slug']}",
+                "message": f"Website '{project_name}' successfully deployed!"
+            }
+    except zipfile.BadZipFile:
+        raise HTTPException(status_code=400, detail="Invalid ZIP archive.")
+    except Exception as e:
+        logger.error(f"Error deploying from zip: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ----------------- Deployment Public Serving -----------------
+@app.get("/d/{slug}")
+@app.get("/d/{slug}/")
+@app.get("/d/{slug}/{subpath:path}")
+async def serve_deployed_site(slug: str, subpath: str = "", background_tasks: BackgroundTasks = None):
+    """
+    Serve live deployed website by custom slug (e.g. /d/my-portfolio/ or /d/my-portfolio/app.js)
+    """
+    dep = await database.get_deployment_by_slug(slug)
+    if not dep:
+        return HTMLResponse(
+            status_code=404,
+            content=f"""<!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>404 - Site Not Found | TeleCloud</title>
+                <script src="https://cdn.tailwindcss.com"></script>
+            </head>
+            <body class="bg-slate-950 text-slate-100 flex items-center justify-center min-h-screen font-sans p-4">
+                <div class="max-w-md w-full bg-slate-900 border border-slate-800 p-8 rounded-2xl text-center shadow-2xl">
+                    <div class="w-16 h-16 bg-rose-500/10 text-rose-400 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-rose-500/20 text-2xl font-bold">404</div>
+                    <h1 class="text-xl font-bold text-white mb-2">Website Not Found</h1>
+                    <p class="text-sm text-slate-400 mb-6">No active website deployment is mapped to slug <code class="text-cyan-400 font-mono">{slug}</code>.</p>
+                    <a href="/" class="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-cyan-500 hover:bg-cyan-600 text-white font-semibold text-sm transition-all">Go to TeleCloud Drive</a>
+                </div>
+            </body>
+            </html>"""
+        )
+
+    # Increment visitor count
+    if background_tasks:
+        background_tasks.add_task(database.increment_deployment_visits, slug)
+    else:
+        asyncio.create_task(database.increment_deployment_visits(slug))
+
+    folder_id = dep["folder_id"]
+    target_path = subpath if subpath else "index.html"
+    file_data = await database.get_file_by_relative_path(folder_id, target_path)
+
+    if not file_data and (not subpath or subpath.endswith("/")):
+        file_data = await database.get_file_by_name(folder_id, "index.html")
+
+    # SPA Fallback: if not an asset request (no extension), try index.html
+    if not file_data and "." not in target_path.split("/")[-1]:
+        file_data = await database.get_file_by_name(folder_id, "index.html")
+
+    if not file_data:
+        return HTMLResponse(
+            status_code=404,
+            content=f"""<!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <meta charset="UTF-8">
+                <title>404 - Page Not Found</title>
+                <script src="https://cdn.tailwindcss.com"></script>
+            </head>
+            <body class="bg-slate-950 text-slate-100 flex items-center justify-center min-h-screen font-sans p-4">
+                <div class="max-w-md w-full bg-slate-900 border border-slate-800 p-8 rounded-2xl text-center shadow-2xl">
+                    <h1 class="text-2xl font-bold text-white mb-2">404 Not Found</h1>
+                    <p class="text-sm text-slate-400 mb-4">File <code class="text-cyan-400 font-mono">{target_path}</code> does not exist in deployment <strong>{dep['name']}</strong>.</p>
+                    <a href="/d/{slug}/" class="text-xs text-cyan-400 hover:underline">Return to Home</a>
+                </div>
+            </body>
+            </html>"""
+        )
+
+    file_size = file_data["size"]
+    mime_type = file_data["mime_type"] or mimetypes.guess_type(file_data["name"])[0] or "text/html"
+
+    if file_data["name"].endswith(".html"):
+        mime_type = "text/html; charset=utf-8"
+    elif file_data["name"].endswith(".css"):
+        mime_type = "text/css; charset=utf-8"
+    elif file_data["name"].endswith(".js"):
+        mime_type = "application/javascript; charset=utf-8"
+    elif file_data["name"].endswith(".json"):
+        mime_type = "application/json; charset=utf-8"
+    elif file_data["name"].endswith(".svg"):
+        mime_type = "image/svg+xml"
 
     headers = {
         "Content-Length": str(file_size),

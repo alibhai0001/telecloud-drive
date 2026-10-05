@@ -98,6 +98,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setViewMode(currentViewMode, false);
     checkAuthStatus();
     loadCurrentDirectory();
+    loadDeployments();
     setupDragAndDrop();
     setupSearch();
     startTasksPolling();
@@ -148,27 +149,45 @@ async function loadCurrentDirectory() {
     }
 }
 
-function updateFolderToolbar() {
+async function updateFolderToolbar() {
     const siteBtn = document.getElementById('currentFolderSiteBtn');
+    const siteBtnText = document.getElementById('currentFolderSiteText');
+    const deployBtn = document.getElementById('btnDeployFolder');
     const zipBtn = document.getElementById('btnZipFolder');
     const initSiteBtn = document.getElementById('btnInitSite');
 
     if (currentFolderId) {
-        zipBtn.classList.remove('hidden');
-        initSiteBtn.classList.remove('hidden');
-        
-        // Check if current folder contains index.html
-        const hasIndex = files.some(f => f.name.toLowerCase() === 'index.html');
-        if (hasIndex) {
-            siteBtn.href = `/site/${currentFolderId}/`;
-            siteBtn.classList.remove('hidden');
-        } else {
-            siteBtn.classList.add('hidden');
+        if (zipBtn) zipBtn.classList.remove('hidden');
+        if (initSiteBtn) initSiteBtn.classList.remove('hidden');
+        if (deployBtn) deployBtn.classList.remove('hidden');
+
+        try {
+            const depRes = await fetch(`/api/deployments/folder/${currentFolderId}`).then(r => r.json());
+            if (depRes.deployed && depRes.deployment) {
+                if (siteBtn) {
+                    siteBtn.href = `/d/${depRes.deployment.slug}/`;
+                    if (siteBtnText) siteBtnText.textContent = `/d/${depRes.deployment.slug}`;
+                    siteBtn.classList.remove('hidden');
+                }
+                if (deployBtn) deployBtn.classList.add('hidden');
+            } else {
+                const hasIndex = files.some(f => f.name.toLowerCase() === 'index.html');
+                if (hasIndex && siteBtn) {
+                    siteBtn.href = `/site/${currentFolderId}/`;
+                    if (siteBtnText) siteBtnText.textContent = 'Live Website';
+                    siteBtn.classList.remove('hidden');
+                } else if (siteBtn) {
+                    siteBtn.classList.add('hidden');
+                }
+            }
+        } catch (e) {
+            console.error("Error checking folder deployment:", e);
         }
     } else {
-        siteBtn.classList.add('hidden');
-        zipBtn.classList.add('hidden');
-        initSiteBtn.classList.add('hidden');
+        if (siteBtn) siteBtn.classList.add('hidden');
+        if (deployBtn) deployBtn.classList.add('hidden');
+        if (zipBtn) zipBtn.classList.add('hidden');
+        if (initSiteBtn) initSiteBtn.classList.add('hidden');
     }
 }
 
@@ -1318,4 +1337,436 @@ async function handleRetryTask(taskId) {
 // Helper: HTML escape
 function escapeHtml(text) {
     return text ? text.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#039;').replace(/</g, '&lt;').replace(/>/g, '&gt;') : '';
+}
+
+// ==================== DEPLOYMENTS & WEB HOSTING HUB ====================
+let allDeployments = [];
+
+function showDriveView() {
+    document.getElementById('driveViewContainer').classList.remove('hidden');
+    document.getElementById('deploymentsViewContainer').classList.add('hidden');
+    
+    document.getElementById('navDriveBtn').className = 'sidebar-link active w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all text-slate-200 hover:bg-slate-800/80';
+    document.getElementById('navDeployBtn').className = 'w-full flex items-center justify-between px-4 py-3 rounded-xl text-sm font-medium transition-all text-slate-300 hover:bg-slate-800/80 hover:text-white group';
+    
+    loadCurrentDirectory();
+}
+
+function showDeploymentsView() {
+    document.getElementById('driveViewContainer').classList.add('hidden');
+    document.getElementById('deploymentsViewContainer').classList.remove('hidden');
+    
+    document.getElementById('navDeployBtn').className = 'sidebar-link active w-full flex items-center justify-between px-4 py-3 rounded-xl text-sm font-medium transition-all text-slate-200 bg-slate-800/90';
+    document.getElementById('navDriveBtn').className = 'w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all text-slate-300 hover:bg-slate-800/80 hover:text-white';
+    
+    loadDeployments();
+}
+
+async function loadDeployments() {
+    try {
+        const res = await fetch('/api/deployments');
+        const deps = await res.json();
+        allDeployments = deps;
+        
+        const badge = document.getElementById('sidebarDeployBadge');
+        if (badge) {
+            if (deps.length > 0) {
+                badge.textContent = deps.length;
+                badge.classList.remove('hidden');
+            } else {
+                badge.classList.add('hidden');
+            }
+        }
+        
+        renderDeployments(deps);
+    } catch (e) {
+        console.error("Error loading deployments:", e);
+    }
+}
+
+function renderDeployments(deps) {
+    const grid = document.getElementById('deploymentsGrid');
+    const emptyState = document.getElementById('deploymentsEmptyState');
+    
+    if (!grid || !emptyState) return;
+
+    if (!deps || deps.length === 0) {
+        grid.innerHTML = '';
+        emptyState.classList.remove('hidden');
+        return;
+    }
+    
+    emptyState.classList.add('hidden');
+    
+    grid.innerHTML = deps.map(d => {
+        let typeIcon = 'rocket';
+        let typeBadge = 'Website';
+        let typeColor = 'text-purple-400 bg-purple-500/10 border-purple-500/20';
+        
+        if (d.type === 'tg_mini_app') {
+            typeIcon = 'smartphone';
+            typeBadge = 'Telegram Mini App';
+            typeColor = 'text-cyan-400 bg-cyan-500/10 border-cyan-500/20';
+        } else if (d.type === 'bio_link') {
+            typeIcon = 'link-2';
+            typeBadge = 'Link-in-Bio';
+            typeColor = 'text-pink-400 bg-pink-500/10 border-pink-500/20';
+        } else if (d.type === 'retro_game') {
+            typeIcon = 'gamepad-2';
+            typeBadge = 'HTML5 Game';
+            typeColor = 'text-amber-400 bg-amber-500/10 border-amber-500/20';
+        } else if (d.type === 'portfolio') {
+            typeIcon = 'sparkles';
+            typeBadge = 'Portfolio';
+            typeColor = 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20';
+        }
+        
+        const visits = d.visits_count || 0;
+        const liveUrl = `/d/${d.slug}`;
+        
+        return `
+            <div class="bg-slate-900/80 border border-dark-border hover:border-purple-500/40 rounded-2xl p-5 shadow-xl transition-all hover:scale-[1.01] flex flex-col justify-between space-y-4 group">
+                <div class="space-y-3">
+                    <div class="flex items-start justify-between gap-3">
+                        <div class="flex items-center gap-3 overflow-hidden">
+                            <div class="w-10 h-10 rounded-xl ${typeColor} flex items-center justify-center flex-shrink-0">
+                                <i data-lucide="${typeIcon}" class="w-5 h-5"></i>
+                            </div>
+                            <div class="overflow-hidden">
+                                <h3 class="font-bold text-sm text-white truncate group-hover:text-purple-300 transition-colors">${escapeHtml(d.name)}</h3>
+                                <span class="text-[10px] font-medium px-2 py-0.5 rounded-full border ${typeColor}">${typeBadge}</span>
+                            </div>
+                        </div>
+                        <span class="flex items-center gap-1 text-[11px] text-emerald-400 font-semibold bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full">
+                            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span> Live
+                        </span>
+                    </div>
+
+                    <!-- URL Display Box -->
+                    <div class="bg-slate-950/80 border border-dark-border rounded-xl p-2.5 flex items-center justify-between text-xs font-mono text-cyan-400">
+                        <span class="truncate select-all mr-2">/d/${d.slug}/</span>
+                        <div class="flex items-center gap-1 flex-shrink-0">
+                            <button onclick="copyDeploymentUrl('${d.slug}')" class="p-1 hover:text-white text-dark-muted rounded transition-colors" title="Copy Link">
+                                <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+                            </button>
+                            <a href="${liveUrl}" target="_blank" class="p-1 hover:text-white text-cyan-400 rounded transition-colors" title="Open Live Site">
+                                <i data-lucide="external-link" class="w-3.5 h-3.5"></i>
+                            </a>
+                        </div>
+                    </div>
+
+                    <!-- Meta Tags -->
+                    <div class="flex items-center justify-between text-[11px] text-dark-muted pt-1">
+                        <span onclick="editDeploymentFiles(${d.folder_id})" class="hover:text-white text-slate-400 cursor-pointer flex items-center gap-1 truncate" title="View in Drive">
+                            <i data-lucide="folder" class="w-3 h-3 text-brand-500"></i> ${escapeHtml(d.folder_name || 'Folder #' + d.folder_id)}
+                        </span>
+                        <span class="flex items-center gap-1 text-slate-400">
+                            <i data-lucide="eye" class="w-3 h-3 text-amber-400"></i> ${visits} visit${visits === 1 ? '' : 's'}
+                        </span>
+                    </div>
+                </div>
+
+                <!-- Card Action Buttons -->
+                <div class="pt-3 border-t border-dark-border/60 flex items-center justify-between gap-2">
+                    <div class="flex items-center gap-1.5">
+                        <a href="${liveUrl}" target="_blank" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-purple-500/20 text-purple-300 hover:bg-purple-500/30 border border-purple-500/30 transition-all flex items-center gap-1.5">
+                            <i data-lucide="play" class="w-3 h-3"></i> Open Site
+                        </a>
+                        <button onclick="editDeploymentFiles(${d.folder_id})" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 border border-dark-border transition-all flex items-center gap-1.5">
+                            <i data-lucide="file-code" class="w-3 h-3 text-cyan-400"></i> Edit Files
+                        </button>
+                    </div>
+                    <button onclick="handleDeleteDeployment('${d.id}')" class="p-1.5 text-dark-muted hover:text-rose-400 rounded-lg hover:bg-rose-500/10 transition-all" title="Unpublish / Delete Deployment">
+                        <i data-lucide="trash-2" class="w-4 h-4"></i>
+                    </button>
+                </div>
+            </div>
+        `;
+    }).join('');
+    
+    lucide.createIcons();
+}
+
+function copyDeploymentUrl(slug) {
+    const fullUrl = `${window.location.origin}/d/${slug}/`;
+    navigator.clipboard.writeText(fullUrl);
+    showToast(`Copied: /d/${slug}/`, 'success');
+}
+
+function editDeploymentFiles(folderId) {
+    showDriveView();
+    navigateToFolder(folderId);
+}
+
+// Deploy Modal Management
+async function openDeployModal(defaultTab = 'starter') {
+    try {
+        const foldersRes = await fetch('/api/folders').then(r => r.json());
+        const select = document.getElementById('deployFolderSelect');
+        if (select) {
+            select.innerHTML = '<option value="">-- Choose a folder --</option>' + 
+                foldersRes.map(f => `<option value="${f.id}" data-name="${escapeHtml(f.name)}">📁 ${escapeHtml(f.name)}</option>`).join('');
+            
+            if (currentFolderId) {
+                select.value = currentFolderId;
+                const opt = select.querySelector(`option[value="${currentFolderId}"]`);
+                if (opt) {
+                    const fName = opt.getAttribute('data-name');
+                    document.getElementById('deployFolderName').value = fName;
+                    autoGenerateSlug(fName, 'deployFolderSlug');
+                }
+            }
+        }
+    } catch (e) {
+        console.error("Error loading folders for deploy modal:", e);
+    }
+    
+    setDeployTab(defaultTab);
+    openModal('deployModal');
+}
+
+function setDeployTab(tab) {
+    const starterBtn = document.getElementById('tabDeployStarterBtn');
+    const folderBtn = document.getElementById('tabDeployFolderBtn');
+    const zipBtn = document.getElementById('tabDeployZipBtn');
+    
+    const starterForm = document.getElementById('deployStarterForm');
+    const folderForm = document.getElementById('deployFolderForm');
+    const zipForm = document.getElementById('deployZipForm');
+    
+    const activeBtnClass = 'px-4 py-2 border-b-2 border-purple-500 text-white font-semibold text-xs transition-all';
+    const inactiveBtnClass = 'px-4 py-2 border-b-2 border-transparent text-dark-muted hover:text-white text-xs transition-all';
+    
+    if (starterBtn) starterBtn.className = tab === 'starter' ? activeBtnClass : inactiveBtnClass;
+    if (folderBtn) folderBtn.className = tab === 'folder' ? activeBtnClass : inactiveBtnClass;
+    if (zipBtn) zipBtn.className = tab === 'zip' ? activeBtnClass : inactiveBtnClass;
+    
+    if (starterForm && folderForm && zipForm) {
+        if (tab === 'starter') {
+            starterForm.classList.remove('hidden');
+            folderForm.classList.add('hidden');
+            zipForm.classList.add('hidden');
+        } else if (tab === 'folder') {
+            folderForm.classList.remove('hidden');
+            starterForm.classList.add('hidden');
+            zipForm.classList.add('hidden');
+        } else if (tab === 'zip') {
+            zipForm.classList.remove('hidden');
+            starterForm.classList.add('hidden');
+            folderForm.classList.add('hidden');
+        }
+    }
+}
+
+function updateTemplateSelection(radio) {
+    document.querySelectorAll('.template-card').forEach(card => {
+        card.classList.remove('border-purple-500', 'bg-purple-500/15');
+        card.classList.add('border-dark-border', 'bg-slate-900/60');
+    });
+    
+    const parentCard = radio.closest('.template-card');
+    if (parentCard) {
+        parentCard.classList.add('border-purple-500', 'bg-purple-500/15');
+        parentCard.classList.remove('border-dark-border', 'bg-slate-900/60');
+    }
+}
+
+function autoGenerateSlug(text, targetId) {
+    const slug = text.toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/(^-|-$)+/g, '');
+    const target = document.getElementById(targetId);
+    if (target) {
+        target.value = slug;
+    }
+    const preview = document.getElementById('starterLiveUrlPreview');
+    if (preview && targetId === 'deployStarterSlug') {
+        preview.textContent = `/d/${slug || 'my-portfolio'}/`;
+    }
+}
+
+function handleFolderSelectChange(select) {
+    const opt = select.options[select.selectedIndex];
+    if (opt && opt.value) {
+        const name = opt.getAttribute('data-name') || opt.text.replace('📁 ', '');
+        document.getElementById('deployFolderName').value = name;
+        autoGenerateSlug(name, 'deployFolderSlug');
+    }
+}
+
+function handleZipFileSelected(event) {
+    const file = event.target.files[0];
+    if (file) {
+        document.getElementById('zipFileLabel').textContent = file.name;
+        const stem = file.name.replace(/\.zip$/i, '');
+        const nameInput = document.getElementById('deployZipName');
+        if (!nameInput.value) {
+            nameInput.value = stem;
+            autoGenerateSlug(stem, 'deployZipSlug');
+        }
+    }
+}
+
+function handleDeployCurrentFolder() {
+    if (!currentFolderId) return;
+    openDeployModal('folder');
+}
+
+// Deploy Submit Handlers
+async function handleDeployStarterSubmit(event) {
+    event.preventDefault();
+    const btn = document.getElementById('btnSubmitDeployStarter');
+    const origText = btn.innerHTML;
+    
+    const name = document.getElementById('deployStarterName').value.trim();
+    const slug = document.getElementById('deployStarterSlug').value.trim();
+    const templateType = document.querySelector('input[name="starterTemplateType"]:checked')?.value || 'portfolio';
+    
+    try {
+        btn.disabled = true;
+        btn.innerHTML = '<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Deploying...';
+        lucide.createIcons();
+        
+        const res = await fetch('/api/deployments/create-starter', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                name,
+                slug,
+                template_type: templateType,
+                parent_id: currentFolderId
+            })
+        });
+        
+        const data = await res.json();
+        if (res.ok && data.success) {
+            closeModal('deployModal');
+            showToast(`🎉 Website '${name}' deployed at /d/${data.deployment.slug}/`, 'success');
+            showDeploymentsView();
+            window.open(data.live_url, '_blank');
+        } else {
+            showToast(data.detail || "Failed to deploy starter template", "error");
+        }
+    } catch (e) {
+        showToast("Error creating deployment: " + e.message, "error");
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = origText;
+        lucide.createIcons();
+    }
+}
+
+async function handleDeployFolderSubmit(event) {
+    event.preventDefault();
+    const btn = document.getElementById('btnSubmitDeployFolder');
+    const origText = btn.innerHTML;
+    
+    const folderId = parseInt(document.getElementById('deployFolderSelect').value);
+    const name = document.getElementById('deployFolderName').value.trim();
+    const slug = document.getElementById('deployFolderSlug').value.trim();
+    
+    if (!folderId) {
+        showToast("Please select a folder to deploy", "error");
+        return;
+    }
+    
+    try {
+        btn.disabled = true;
+        btn.innerHTML = '<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Deploying...';
+        lucide.createIcons();
+        
+        const res = await fetch('/api/deployments', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                name,
+                slug,
+                folder_id: folderId,
+                type: 'static_website'
+            })
+        });
+        
+        const data = await res.json();
+        if (res.ok && data.success) {
+            closeModal('deployModal');
+            showToast(`🚀 Deployed successfully at /d/${data.deployment.slug}/`, 'success');
+            showDeploymentsView();
+            window.open(data.live_url, '_blank');
+        } else {
+            showToast(data.detail || "Failed to deploy folder", "error");
+        }
+    } catch (e) {
+        showToast("Error deploying folder: " + e.message, "error");
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = origText;
+        lucide.createIcons();
+    }
+}
+
+async function handleDeployZipSubmit(event) {
+    event.preventDefault();
+    const btn = document.getElementById('btnSubmitDeployZip');
+    const origText = btn.innerHTML;
+    
+    const fileInput = document.getElementById('deployZipInput');
+    const name = document.getElementById('deployZipName').value.trim();
+    const slug = document.getElementById('deployZipSlug').value.trim();
+    
+    if (!fileInput.files || !fileInput.files[0]) {
+        showToast("Please choose a .zip file", "error");
+        return;
+    }
+    
+    const formData = new FormData();
+    formData.append('zip_file', fileInput.files[0]);
+    if (name) formData.append('name', name);
+    if (slug) formData.append('slug', slug);
+    if (currentFolderId) formData.append('parent_id', currentFolderId);
+    
+    try {
+        btn.disabled = true;
+        btn.innerHTML = '<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Uploading & Deploying...';
+        lucide.createIcons();
+        
+        const res = await fetch('/api/deployments/from-zip', {
+            method: 'POST',
+            body: formData
+        });
+        
+        const data = await res.json();
+        if (res.ok && data.success) {
+            closeModal('deployModal');
+            showToast(`🚀 ZIP website deployed live at /d/${data.deployment.slug}/`, 'success');
+            showDeploymentsView();
+            window.open(data.live_url, '_blank');
+        } else {
+            showToast(data.detail || "Failed to deploy from zip", "error");
+        }
+    } catch (e) {
+        showToast("Error deploying ZIP: " + e.message, "error");
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = origText;
+        lucide.createIcons();
+    }
+}
+
+async function handleDeleteDeployment(depId) {
+    if (!confirm("Are you sure you want to unpublish / remove this deployment? (Files will remain safe in your cloud)")) {
+        return;
+    }
+    
+    try {
+        const res = await fetch(`/api/deployments/${depId}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (res.ok && data.success) {
+            showToast("Deployment removed", "info");
+            loadDeployments();
+        } else {
+            showToast("Failed to delete deployment", "error");
+        }
+    } catch (e) {
+        showToast("Error deleting deployment", "error");
+    }
 }

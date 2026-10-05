@@ -1,6 +1,7 @@
 import aiosqlite
 import secrets
 import json
+import re
 from typing import Optional, List, Dict, Any
 from config import DB_PATH
 
@@ -68,6 +69,22 @@ async def init_db():
                 downloads_count INTEGER DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (file_id) REFERENCES files (id) ON DELETE CASCADE
+            )
+        """)
+
+        # Deployments Table
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS deployments (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                slug TEXT UNIQUE NOT NULL,
+                folder_id INTEGER NOT NULL,
+                type TEXT DEFAULT 'static_website',
+                status TEXT DEFAULT 'active',
+                visits_count INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (folder_id) REFERENCES folders (id) ON DELETE CASCADE
             )
         """)
         
@@ -506,5 +523,105 @@ async def delete_share_link(token: str) -> bool:
     """Revoke public share link"""
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("DELETE FROM share_links WHERE token = ?", (token,))
+        await db.commit()
+        return True
+
+# ----------------- Deployments -----------------
+async def create_deployment(name: str, slug: str, folder_id: int, deploy_type: str = "static_website") -> Dict[str, Any]:
+    """Create or update a deployment mapping"""
+    clean_slug = re.sub(r'[^a-zA-Z0-9_-]', '-', slug.strip().lower()).strip('-') or f"app-{secrets.token_hex(3)}"
+    dep_id = f"dep_{secrets.token_hex(4)}"
+    
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        # Check if slug exists, if so append random suffix
+        async with db.execute("SELECT id FROM deployments WHERE slug = ?", (clean_slug,)) as cur:
+            if await cur.fetchone():
+                clean_slug = f"{clean_slug}-{secrets.token_hex(2)}"
+
+        await db.execute("""
+            INSERT INTO deployments (id, name, slug, folder_id, type, status, visits_count)
+            VALUES (?, ?, ?, ?, ?, 'active', 0)
+        """, (dep_id, name.strip(), clean_slug, folder_id, deploy_type))
+        await db.commit()
+
+        async with db.execute("""
+            SELECT d.*, f.name as folder_name 
+            FROM deployments d 
+            JOIN folders f ON d.folder_id = f.id 
+            WHERE d.id = ?
+        """, (dep_id,)) as cur:
+            row = await cur.fetchone()
+            return dict(row)
+
+async def get_all_deployments() -> List[Dict[str, Any]]:
+    """List all deployments with folder names"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        query = """
+            SELECT d.*, f.name as folder_name,
+                   (SELECT COUNT(*) FROM files WHERE folder_id = d.folder_id) as files_count
+            FROM deployments d
+            LEFT JOIN folders f ON d.folder_id = f.id
+            ORDER BY d.created_at DESC
+        """
+        async with db.execute(query) as cur:
+            rows = await cur.fetchall()
+            return [dict(r) for r in rows]
+
+async def get_deployment_by_slug(slug: str) -> Optional[Dict[str, Any]]:
+    """Find deployment by URL slug"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        query = """
+            SELECT d.*, f.name as folder_name
+            FROM deployments d
+            LEFT JOIN folders f ON d.folder_id = f.id
+            WHERE lower(d.slug) = lower(?)
+        """
+        async with db.execute(query, (slug.strip(),)) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+async def increment_deployment_visits(slug: str):
+    """Increment page view counter for deployment"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE deployments SET visits_count = visits_count + 1 WHERE lower(slug) = lower(?)", (slug.strip(),))
+        await db.commit()
+
+async def get_deployment(dep_id: str) -> Optional[Dict[str, Any]]:
+    """Find deployment by ID"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        query = """
+            SELECT d.*, f.name as folder_name,
+                   (SELECT COUNT(*) FROM files WHERE folder_id = d.folder_id) as files_count
+            FROM deployments d
+            LEFT JOIN folders f ON d.folder_id = f.id
+            WHERE d.id = ?
+        """
+        async with db.execute(query, (dep_id,)) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+async def get_deployment_by_folder_id(folder_id: int) -> Optional[Dict[str, Any]]:
+    """Find active deployment for a folder"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        query = """
+            SELECT d.*, f.name as folder_name
+            FROM deployments d
+            LEFT JOIN folders f ON d.folder_id = f.id
+            WHERE d.folder_id = ?
+            ORDER BY d.created_at DESC LIMIT 1
+        """
+        async with db.execute(query, (folder_id,)) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+async def delete_deployment(dep_id: str) -> bool:
+    """Delete a deployment"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM deployments WHERE id = ?", (dep_id,))
         await db.commit()
         return True

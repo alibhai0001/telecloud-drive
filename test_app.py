@@ -71,11 +71,71 @@ async def test_database_folders_and_shares():
     assert f1_updated["parent_id"] == target_parent["id"]
     print("[OK] Move Folder passed")
     
-    # Clean up
-    await database.delete_folder_recursive(target_parent["id"])
-    print("[OK] Clean up passed")
+async def test_deployment_system():
+    from app import generate_starter_template_files
+    await database.init_db()
+
+    # Create folder for website
+    folder = await database.create_folder("Demo Mini App", None)
+    folder_id = folder["id"]
+
+    # Add index.html & style.css
+    f_index = await database.add_file("index.html", 300, "text/html", folder_id, 3001, "me")
+    f_css = await database.add_file("style.css", 150, "text/css", folder_id, 3002, "me")
+
+    # Create deployment
+    dep = await database.create_deployment(name="Demo Mini App", slug="demo-mini-app", folder_id=folder_id, deploy_type="tg_mini_app")
+    assert dep["name"] == "Demo Mini App"
+    assert dep["slug"] == "demo-mini-app"
+    assert dep["folder_id"] == folder_id
+    assert dep["visits_count"] == 0
+    print("[OK] Deployment Creation passed")
+
+    # Get by slug
+    dep_found = await database.get_deployment_by_slug("demo-mini-app")
+    assert dep_found is not None
+    assert dep_found["id"] == dep["id"]
+    print("[OK] Get Deployment by Slug passed")
+
+    # Increment visits
+    await database.increment_deployment_visits("demo-mini-app")
+    dep_updated = await database.get_deployment_by_slug("demo-mini-app")
+    assert dep_updated["visits_count"] == 1
+    print("[OK] Increment Deployment Visits passed")
+
+    # Get by folder id
+    dep_by_folder = await database.get_deployment_by_folder_id(folder_id)
+    assert dep_by_folder is not None
+    assert dep_by_folder["slug"] == "demo-mini-app"
+    print("[OK] Get Deployment by Folder ID passed")
+
+    # List all deployments
+    all_deps = await database.get_all_deployments()
+    assert len(all_deps) >= 1
+    assert any(d["slug"] == "demo-mini-app" for d in all_deps)
+    print("[OK] List All Deployments passed")
+
+    # Test Starter Templates Generator
+    for t_type in ["portfolio", "tg_mini_app", "bio_link", "retro_game"]:
+        files = generate_starter_template_files(t_type, f"Test {t_type}")
+        assert len(files) >= 2
+        file_names = [f["name"] for f in files]
+        assert "index.html" in file_names
+        for f in files:
+            assert len(f["content"]) > 0
+    print("[OK] Starter Template Generators passed")
+
+    # Delete deployment
+    deleted = await database.delete_deployment(dep["id"])
+    assert deleted is True
+    assert await database.get_deployment_by_slug("demo-mini-app") is None
+    print("[OK] Delete Deployment passed")
+
+    # Clean up folder
+    await database.delete_folder_recursive(folder_id)
 
 if __name__ == "__main__":
     asyncio.run(test_gdrive_extraction())
     asyncio.run(test_database_folders_and_shares())
-    print("[SUCCESS] All backend tests passed successfully!")
+    asyncio.run(test_deployment_system())
+    print("[SUCCESS] All backend & deployment tests passed successfully!")

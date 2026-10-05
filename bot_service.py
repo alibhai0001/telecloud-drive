@@ -110,8 +110,10 @@ class BotService:
                 "• `/createfolder <name>` - Naya folder banayein (e.g. `/createfolder Movies`).\n"
                 "• `/files` - Active folder ki files list karein.\n"
                 "• `/search <query>` - Files search karein (e.g. `/search video.mp4`).\n"
+                "• `/deploy <folder_id_or_name> [slug]` - 🚀 Kisi folder ko instantly live website bana kar deploy karein!\n"
+                "• `/deployments` ya `/sites` - Sabhi live deployed websites aur Mini-Apps ki list dekhein.\n"
+                "• `/undeploy <slug>` - Website deployment ko unpublish / delete karein.\n"
                 "• `/stats` - Total storage & file count dekhein.\n"
-                "• `/websites` - Live hosted static websites ki list dekhein.\n"
                 "• `/setfolder <id>` - Target folder set karein jisme nayi files aayengi.\n"
                 "• `/resetfolder` - Target folder ko Root par reset karein."
             )
@@ -256,6 +258,102 @@ class BotService:
             buttons = [[Button.url("🌐 Open in Web Drive", web_url)]]
             await event.respond("\n".join(msg_parts), buttons=buttons)
 
+        # Command: /deploy <folder_id_or_name> [slug]
+        @client.on(events.NewMessage(pattern=r"^/deploy(?:\s+(\S+))?(?:\s+(\S+))?"))
+        async def handle_deploy_cmd(event):
+            target = event.pattern_match.group(1)
+            custom_slug = event.pattern_match.group(2)
+            web_url = self.get_web_url()
+
+            if not target:
+                await event.respond(
+                    "⚠️ **Usage:** `/deploy <folder_id_or_name> [slug]`\n\n"
+                    "**Examples:**\n"
+                    "• `/deploy 1 my-portfolio`\n"
+                    "• `/deploy Website`\n\n"
+                    "Use `/folders` to see all your folders."
+                )
+                return
+
+            target = target.strip()
+            folder = None
+            if target.isdigit():
+                folder = await database.get_folder(int(target))
+            
+            if not folder:
+                all_f = await database.get_folders()
+                for f in all_f:
+                    if f["name"].lower() == target.lower():
+                        folder = f
+                        break
+
+            if not folder:
+                await event.respond(f"❌ Folder `{target}` not found. Check `/folders`.")
+                return
+
+            slug = custom_slug or folder["name"]
+            dep = await database.create_deployment(name=folder["name"], slug=slug, folder_id=folder["id"])
+            live_url = f"{web_url}/d/{dep['slug']}"
+
+            buttons = [
+                [Button.url("🌐 Open Live Website", live_url)],
+                [Button.url("📂 Manage in Drive", web_url)]
+            ]
+
+            msg = (
+                f"🚀 **Website Deployed Successfully!**\n\n"
+                f"✨ **Name:** `{dep['name']}`\n"
+                f"📁 **Folder:** `{folder['name']}`\n"
+                f"🔗 **Live URL:** {live_url}\n"
+                f"🌐 **Slug:** `/d/{dep['slug']}`\n\n"
+                f"Folder me koi bhi file edit ya upload karne par live site instantly update ho jayegi!"
+            )
+            await event.respond(msg, buttons=buttons)
+
+        # Command: /deployments or /sites
+        @client.on(events.NewMessage(pattern=r"^/(?:deployments|sites)"))
+        async def handle_deployments_list_cmd(event):
+            deps = await database.get_all_deployments()
+            web_url = self.get_web_url()
+
+            if not deps:
+                await event.respond(
+                    "🚀 **No Active Deployments Found**\n\n"
+                    "Aap kisi bhi folder ko deploy kar sakte hain:\n"
+                    "Command: `/deploy <folder_name_or_id> [slug]`"
+                )
+                return
+
+            text_parts = ["🚀 **Active TeleCloud Deployments & Sites:**\n"]
+            buttons = []
+            for d in deps:
+                live_url = f"{web_url}/d/{d['slug']}"
+                text_parts.append(
+                    f"• 🌐 **{d['name']}**\n"
+                    f"  🔗 URL: {live_url}\n"
+                    f"  📁 Folder: `{d.get('folder_name', 'Unknown')}` | 👁️ Visits: `{d.get('visits_count', 0)}`\n"
+                )
+                if len(buttons) < 4:
+                    buttons.append([Button.url(f"🌐 Open {d['name']}", live_url)])
+
+            await event.respond("\n".join(text_parts), buttons=buttons if buttons else None)
+
+        # Command: /undeploy <slug>
+        @client.on(events.NewMessage(pattern=r"^/undeploy(?:\s+(\S+))?"))
+        async def handle_undeploy_cmd(event):
+            slug = event.pattern_match.group(1)
+            if not slug:
+                await event.respond("⚠️ **Usage:** `/undeploy <slug>`\nExample: `/undeploy my-portfolio`")
+                return
+
+            dep = await database.get_deployment_by_slug(slug.strip())
+            if not dep:
+                await event.respond(f"❌ No deployment found with slug `{slug}`.")
+                return
+
+            await database.delete_deployment(dep["id"])
+            await event.respond(f"✅ Deployment `{dep['name']}` (`/d/{dep['slug']}`) has been removed/unassigned.")
+
         # Command: /websites
         @client.on(events.NewMessage(pattern=r"^/websites"))
         async def handle_websites_cmd(event):
@@ -272,7 +370,7 @@ class BotService:
             if not hosted_sites:
                 await event.respond(
                     "🌐 **No Hosted Websites Yet**\n\n"
-                    "Aap kisi bhi folder me `index.html` file upload ya create karein, woh folder automatically live static website ban jayega!"
+                    "Aap kisi bhi folder me `index.html` file upload ya create karein, ya `/deploy <folder>` command use karein!"
                 )
                 return
 
