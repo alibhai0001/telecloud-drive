@@ -474,22 +474,38 @@ async def upload_local_file(
     if not auth.get("authorized"):
         raise HTTPException(status_code=401, detail="Telegram is not connected. Please connect Telegram in settings.")
 
-    task_id = task_manager.create_task("local_upload", file.filename or "uploaded_file")
-    temp_path = config.TEMP_DIR / f"upload_{task_id}_{file.filename}"
+    original_filename = file.filename or "uploaded_file"
+    safe_name = re.sub(r'[\\/*?:<>|]', '_', original_filename)
+    task_id = task_manager.create_task("local_upload", original_filename, {"folder_id": folder_id})
+    temp_path = config.TEMP_DIR / f"upload_{task_id}_{safe_name}"
     
+    # Save file stream to disk BEFORE returning response (prevents FastAPI closing file handle)
+    try:
+        with open(temp_path, "wb") as buffer:
+            while chunk := await file.read(1024 * 1024):
+                buffer.write(chunk)
+    except Exception as e:
+        logger.error(f"Error saving temp upload file: {e}")
+        if temp_path.exists():
+            temp_path.unlink(missing_ok=True)
+        task_manager.update_task(task_id, status="failed", error=str(e), step=f"Error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to receive file: {str(e)}")
+
+    file_size = os.path.getsize(temp_path)
+
     async def process_upload():
         try:
-            task_manager.update_task(task_id, status="uploading", step="Saving temporary file...", progress=10)
-            
-            with open(temp_path, "wb") as buffer:
-                while chunk := await file.read(1024 * 1024):
-                    buffer.write(chunk)
-                    
-            file_size = os.path.getsize(temp_path)
+            task_manager.update_task(
+                task_id,
+                status="uploading",
+                step="Uploading to Telegram Saved Messages...",
+                progress=15,
+                total_bytes=file_size
+            )
             
             def tg_progress(current, total):
                 if total > 0:
-                    pct = 10 + int((current / total) * 85)
+                    pct = 15 + int((current / total) * 80)
                     task_manager.update_task(
                         task_id,
                         progress=pct,
@@ -498,13 +514,13 @@ async def upload_local_file(
                     
             upload_res = await telegram_service.upload_file(
                 file_path=str(temp_path),
-                file_name=file.filename,
+                file_name=original_filename,
                 chat_id="me",
                 progress_callback=tg_progress
             )
             
             db_file = await database.add_file(
-                name=file.filename,
+                name=original_filename,
                 size=file_size,
                 mime_type=upload_res["mime_type"],
                 folder_id=folder_id,
