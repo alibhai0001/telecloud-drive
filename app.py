@@ -224,7 +224,8 @@ async def download_folder_zip(folder_id: int):
                 zip_file.writestr(zip_path, file_bytes)
 
     zip_buffer.seek(0)
-    zip_filename = f"{re.sub(r'[\\/*?:<>|]', '_', folder['name'])}.zip"
+    clean_folder_name = re.sub(r'[\\/*?:<>|]', '_', folder['name'])
+    zip_filename = f"{clean_folder_name}.zip"
 
     headers = {
         "Content-Disposition": f'attachment; filename="{zip_filename}"',
