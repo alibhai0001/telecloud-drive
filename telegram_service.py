@@ -5,6 +5,7 @@ import mimetypes
 from pathlib import Path
 from typing import Optional, Dict, Any, AsyncGenerator, Callable
 from telethon import TelegramClient, events
+from telethon.sessions import StringSession
 from telethon.tl.types import DocumentAttributeFilename, DocumentAttributeVideo, DocumentAttributeAudio
 from telethon.errors import (
     SessionPasswordNeededError,
@@ -27,9 +28,8 @@ class TelegramService:
         self.current_user: Optional[Dict[str, Any]] = None
         
     async def get_client(self, api_id: Optional[str] = None, api_hash: Optional[str] = None) -> Optional[TelegramClient]:
-        """Initialize or return current Telethon client"""
+        """Initialize or return current Telethon client with persistent StringSession support"""
         async with self._lock:
-            # Check DB or Config for credentials
             eff_api_id = api_id or await database.get_setting("api_id") or config.API_ID
             eff_api_hash = api_hash or await database.get_setting("api_hash") or config.API_HASH
             
@@ -41,10 +41,15 @@ class TelegramService:
             except ValueError:
                 return None
                 
-            session_file = str(config.DATA_DIR / "tg_cloud_session")
-            
             if self.client is None or not self.client.is_connected():
-                self.client = TelegramClient(session_file, eff_api_id_int, eff_api_hash)
+                eff_session_str = await database.get_setting("session_string") or os.getenv("TELEGRAM_SESSION_STRING", "")
+                
+                if eff_session_str:
+                    self.client = TelegramClient(StringSession(eff_session_str), eff_api_id_int, eff_api_hash)
+                else:
+                    session_file = str(config.DATA_DIR / "tg_cloud_session")
+                    self.client = TelegramClient(session_file, eff_api_id_int, eff_api_hash)
+                    
                 await self.client.connect()
                 
             return self.client
@@ -149,6 +154,16 @@ class TelegramService:
                 return {"success": False, "requires_password": True, "error": "Invalid 2FA password"}
                 
             me = await client.get_me()
+            
+            # Save persistent StringSession
+            try:
+                session_str = client.session.save()
+                if session_str:
+                    await database.set_setting("session_string", session_str)
+                    config.update_env_file("TELEGRAM_SESSION_STRING", session_str)
+            except Exception as e:
+                logger.warning(f"Could not save StringSession: {e}")
+
             return {
                 "success": True,
                 "user": {
@@ -177,6 +192,16 @@ class TelegramService:
                 
             await client.start(bot_token=bot_token)
             me = await client.get_me()
+
+            # Save persistent StringSession
+            try:
+                session_str = client.session.save()
+                if session_str:
+                    await database.set_setting("session_string", session_str)
+                    config.update_env_file("TELEGRAM_SESSION_STRING", session_str)
+            except Exception as e:
+                logger.warning(f"Could not save StringSession: {e}")
+
             return {
                 "success": True,
                 "user": {
@@ -199,6 +224,8 @@ class TelegramService:
             session_file = config.DATA_DIR / "tg_cloud_session.session"
             if session_file.exists():
                 session_file.unlink()
+            await database.set_setting("session_string", "")
+            config.update_env_file("TELEGRAM_SESSION_STRING", "")
             return True
         except Exception as e:
             logger.error(f"Error logging out: {e}")
