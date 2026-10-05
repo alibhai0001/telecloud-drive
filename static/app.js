@@ -1442,9 +1442,26 @@ function renderDeployments(deps) {
                         </span>
                     </div>
 
-                    <!-- URL Display Box -->
+                    <!-- Telegram Direct Link (if bot username exists) -->
+                    ${d.tg_app_url ? `
+                    <div class="bg-blue-950/50 border border-blue-500/30 rounded-xl p-2.5 flex items-center justify-between text-xs font-mono text-blue-300">
+                        <div class="flex items-center gap-2 overflow-hidden mr-2">
+                            <i data-lucide="send" class="w-3.5 h-3.5 text-blue-400 flex-shrink-0"></i>
+                            <span class="truncate select-all text-[11px]">${escapeHtml(d.tg_app_url)}</span>
+                        </div>
+                        <div class="flex items-center gap-1 flex-shrink-0">
+                            <button onclick="copyToClipboard('${d.tg_app_url}', 'Telegram Link')" class="p-1 hover:text-white text-blue-400 rounded transition-colors" title="Copy Telegram Link">
+                                <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+                            </button>
+                            <a href="${d.tg_app_url}" target="_blank" class="p-1 hover:text-white text-blue-400 rounded transition-colors" title="Open in Telegram">
+                                <i data-lucide="external-link" class="w-3.5 h-3.5"></i>
+                            </a>
+                        </div>
+                    </div>` : ''}
+
+                    <!-- Web URL Display Box -->
                     <div class="bg-slate-950/80 border border-dark-border rounded-xl p-2.5 flex items-center justify-between text-xs font-mono text-cyan-400">
-                        <span class="truncate select-all mr-2">/d/${d.slug}/</span>
+                        <span class="truncate select-all mr-2 text-[11px]">/d/${d.slug}/</span>
                         <div class="flex items-center gap-1 flex-shrink-0">
                             <button onclick="copyDeploymentUrl('${d.slug}')" class="p-1 hover:text-white text-dark-muted rounded transition-colors" title="Copy Link">
                                 <i data-lucide="copy" class="w-3.5 h-3.5"></i>
@@ -1468,9 +1485,13 @@ function renderDeployments(deps) {
 
                 <!-- Card Action Buttons -->
                 <div class="pt-3 border-t border-dark-border/60 flex items-center justify-between gap-2">
-                    <div class="flex items-center gap-1.5">
+                    <div class="flex items-center gap-1.5 flex-wrap">
+                        ${d.tg_app_url ? `
+                        <a href="${d.tg_app_url}" target="_blank" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-500/20 text-blue-300 hover:bg-blue-500/30 border border-blue-500/30 transition-all flex items-center gap-1.5">
+                            <i data-lucide="send" class="w-3 h-3"></i> Telegram Link
+                        </a>` : ''}
                         <a href="${liveUrl}" target="_blank" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-purple-500/20 text-purple-300 hover:bg-purple-500/30 border border-purple-500/30 transition-all flex items-center gap-1.5">
-                            <i data-lucide="play" class="w-3 h-3"></i> Open Site
+                            <i data-lucide="play" class="w-3 h-3"></i> Open Web
                         </a>
                         <button onclick="editDeploymentFiles(${d.folder_id})" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-200 border border-dark-border transition-all flex items-center gap-1.5">
                             <i data-lucide="file-code" class="w-3 h-3 text-cyan-400"></i> Edit Files

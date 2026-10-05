@@ -1385,16 +1385,35 @@ function gameLoop(now) {
         ]
 
 # ----------------- Deployments API Endpoints -----------------
+async def get_bot_username_cached() -> str:
+    try:
+        auth = await telegram_service.get_auth_status()
+        if auth.get("user") and auth["user"].get("username"):
+            return auth["user"]["username"]
+    except Exception:
+        pass
+    return ""
+
+async def enrich_deployment(d: dict) -> dict:
+    custom_url = (os.getenv("PUBLIC_URL") or os.getenv("WEBAPP_URL") or "").rstrip("/")
+    bot_username = await get_bot_username_cached()
+    slug = d.get("slug", "")
+    d["live_url"] = f"/d/{slug}"
+    d["full_url"] = f"{custom_url}/d/{slug}" if custom_url else f"/d/{slug}"
+    if bot_username:
+        d["tg_app_url"] = f"https://t.me/{bot_username}?startapp={slug}"
+        d["tg_start_url"] = f"https://t.me/{bot_username}?start={slug}"
+    else:
+        d["tg_app_url"] = ""
+        d["tg_start_url"] = ""
+    return d
+
 @app.get("/api/deployments")
 async def list_deployments():
     """List all deployed websites and mini apps"""
     deps = await database.get_all_deployments()
-    custom_url = os.getenv("PUBLIC_URL") or os.getenv("WEBAPP_URL") or ""
-    custom_url = custom_url.rstrip("/")
-    for d in deps:
-        d["live_url"] = f"/d/{d['slug']}"
-        d["full_url"] = f"{custom_url}/d/{d['slug']}" if custom_url else f"/d/{d['slug']}"
-    return deps
+    enriched = [await enrich_deployment(d) for d in deps]
+    return enriched
 
 @app.post("/api/deployments")
 async def create_deployment_endpoint(req: DeploymentCreate):
@@ -1404,10 +1423,13 @@ async def create_deployment_endpoint(req: DeploymentCreate):
         raise HTTPException(status_code=404, detail="Folder not found")
 
     dep = await database.create_deployment(req.name, req.slug, req.folder_id, req.type or "static_website")
+    dep = await enrich_deployment(dep)
     return {
         "success": True,
         "deployment": dep,
-        "live_url": f"/d/{dep['slug']}"
+        "live_url": dep["live_url"],
+        "tg_app_url": dep.get("tg_app_url", ""),
+        "tg_start_url": dep.get("tg_start_url", "")
     }
 
 @app.get("/api/deployments/folder/{folder_id}")
@@ -1416,10 +1438,13 @@ async def get_folder_deployment(folder_id: int):
     dep = await database.get_deployment_by_folder_id(folder_id)
     if not dep:
         return {"deployed": False, "deployment": None}
+    dep = await enrich_deployment(dep)
     return {
         "deployed": True,
         "deployment": dep,
-        "live_url": f"/d/{dep['slug']}"
+        "live_url": dep["live_url"],
+        "tg_app_url": dep.get("tg_app_url", ""),
+        "tg_start_url": dep.get("tg_start_url", "")
     }
 
 @app.delete("/api/deployments/{dep_id}")
@@ -1430,7 +1455,7 @@ async def delete_deployment_endpoint(dep_id: str):
 
 @app.post("/api/deployments/create-starter")
 async def create_starter_deployment(req: StarterDeployRequest):
-    """1-Click Create & Deploy Starter Template (Mini App, Portfolio, Bio Link, Game)"""
+    """1-Click Create & Deploy Starter Template (Mini App, Portfolio, Bio Link, Game, FastOTP)"""
     auth = await telegram_service.get_auth_status()
     if not auth.get("authorized"):
         raise HTTPException(status_code=401, detail="Telegram is not connected. Please connect in settings.")
@@ -1459,11 +1484,14 @@ async def create_starter_deployment(req: StarterDeployRequest):
 
     # Create deployment
     dep = await database.create_deployment(req.name, req.slug, folder_id, req.template_type)
+    dep = await enrich_deployment(dep)
     return {
         "success": True,
         "deployment": dep,
         "folder_id": folder_id,
-        "live_url": f"/d/{dep['slug']}",
+        "live_url": dep["live_url"],
+        "tg_app_url": dep.get("tg_app_url", ""),
+        "tg_start_url": dep.get("tg_start_url", ""),
         "message": f"Starter template '{req.name}' created and deployed live!"
     }
 
@@ -1544,11 +1572,14 @@ async def deploy_from_zip(
 
             dep_slug = slug or re.sub(r'[^a-zA-Z0-9_-]', '-', project_name.lower()).strip('-') or f"site-{secrets.token_hex(3)}"
             dep = await database.create_deployment(project_name, dep_slug, folder_id)
+            dep = await enrich_deployment(dep)
             return {
                 "success": True,
                 "deployment": dep,
                 "folder_id": folder_id,
-                "live_url": f"/d/{dep['slug']}",
+                "live_url": dep["live_url"],
+                "tg_app_url": dep.get("tg_app_url", ""),
+                "tg_start_url": dep.get("tg_start_url", ""),
                 "message": f"Website '{project_name}' successfully deployed!"
             }
     except zipfile.BadZipFile:

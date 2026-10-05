@@ -49,14 +49,53 @@ class BotService:
     def _register_handlers(self, client):
         """Register all command and file upload event handlers"""
 
-        # Command: /start
-        @client.on(events.NewMessage(pattern=r"^/start"))
+        # Command: /start [param]
+        @client.on(events.NewMessage(pattern=r"^/start(?:\s+(\S+))?"))
         async def handle_start(event):
             sender = await event.get_sender()
             sender_id = sender.id if sender else event.chat_id
             name = getattr(sender, "first_name", "Friend") or "Friend"
             web_url = self.get_web_url()
-            
+            start_param = event.pattern_match.group(1) if event.pattern_match else None
+
+            # Handle direct Telegram Mini App deep links (e.g. t.me/bot?start=otp or ?startapp=slug)
+            if start_param and start_param.strip():
+                clean_slug = start_param.strip().lower()
+                if clean_slug.startswith("app_"):
+                    clean_slug = clean_slug[4:]
+
+                if clean_slug in ["otp", "fastotp", "live_otp"]:
+                    otp_url = f"{web_url}/otp"
+                    buttons = [
+                        [Button.url("⚡ Open FastOTP Panel (In-App)", otp_url)],
+                        [Button.inline("🔄 Check OTP Stats", b"action:otp_stats")]
+                    ]
+                    await event.respond(
+                        f"⚡ **FastOTP Live Panel & SMS Hub**\n\n"
+                        f"Hosted 24/7 on Telegram Cloud Storage!\n"
+                        f"Click below to launch the live panel in Telegram:",
+                        buttons=buttons
+                    )
+                    return
+
+                dep = await database.get_deployment_by_slug(clean_slug)
+                if dep:
+                    await database.increment_deployment_visits(clean_slug)
+                    live_url = f"{web_url}/d/{dep['slug']}"
+                    buttons = [
+                        [Button.url(f"📱 Open {dep['name']} (In-App)", live_url)],
+                        [Button.url("🌐 Open in Browser", live_url)]
+                    ]
+                    await event.respond(
+                        f"🚀 **{dep['name']} — Live on Telegram**\n\n"
+                        f"✨ **Deployment:** `{dep['slug']}`\n"
+                        f"📁 **Source Folder:** `{dep.get('folder_name', 'Telegram Storage')}`\n"
+                        f"👀 **Visits:** `{dep.get('visits_count', 0) + 1}`\n\n"
+                        f"Click below to launch instantly inside Telegram:",
+                        buttons=buttons
+                    )
+                    return
+
             stats = await database.get_storage_stats()
             stats_size = humanize.naturalsize(stats["total_size"])
             
@@ -306,18 +345,26 @@ class BotService:
             dep = await database.create_deployment(name=folder["name"], slug=slug, folder_id=folder["id"])
             live_url = f"{web_url}/d/{dep['slug']}"
 
+            bot_user = await client.get_me()
+            bot_username = bot_user.username if bot_user else ""
+            tg_link = f"https://t.me/{bot_username}?startapp={dep['slug']}" if bot_username else ""
+            tg_start_link = f"https://t.me/{bot_username}?start={dep['slug']}" if bot_username else ""
+
             buttons = [
-                [Button.url("🌐 Open Live Website", live_url)],
-                [Button.url("📂 Manage in Drive", web_url)]
+                [Button.url("📱 Open in Telegram (In-App)", live_url)],
+                [Button.url("🌐 Open in Web Browser", live_url)]
             ]
+
+            tg_link_info = f"📱 **Telegram Direct Link:** `{tg_link}`\n" if tg_link else ""
 
             msg = (
                 f"🚀 **Website Deployed Successfully!**\n\n"
                 f"✨ **Name:** `{dep['name']}`\n"
-                f"📁 **Folder:** `{folder['name']}`\n"
-                f"🔗 **Live URL:** {live_url}\n"
-                f"🌐 **Slug:** `/d/{dep['slug']}`\n\n"
-                f"Folder me koi bhi file edit ya upload karne par live site instantly update ho jayegi!"
+                f"📁 **Telegram Folder:** `{folder['name']}`\n"
+                f"{tg_link_info}"
+                f"🌐 **Web URL:** {live_url}\n"
+                f"⚡ **Slug:** `/d/{dep['slug']}`\n\n"
+                f"Aapka site/panel 24/7 Telegram Cloud Storage se live stream ho raha hai!"
             )
             await event.respond(msg, buttons=buttons)
 
@@ -326,6 +373,8 @@ class BotService:
         async def handle_deployments_list_cmd(event):
             deps = await database.get_all_deployments()
             web_url = self.get_web_url()
+            bot_user = await client.get_me()
+            bot_username = bot_user.username if bot_user else ""
 
             if not deps:
                 await event.respond(
@@ -339,13 +388,16 @@ class BotService:
             buttons = []
             for d in deps:
                 live_url = f"{web_url}/d/{d['slug']}"
+                tg_link = f"https://t.me/{bot_username}?startapp={d['slug']}" if bot_username else ""
+                tg_info = f"  📱 Telegram: `{tg_link}`\n" if tg_link else ""
                 text_parts.append(
-                    f"• 🌐 **{d['name']}**\n"
+                    f"• 🌐 **{d['name']}** (`/d/{d['slug']}`)\n"
+                    f"{tg_info}"
                     f"  🔗 URL: {live_url}\n"
                     f"  📁 Folder: `{d.get('folder_name', 'Unknown')}` | 👁️ Visits: `{d.get('visits_count', 0)}`\n"
                 )
                 if len(buttons) < 4:
-                    buttons.append([Button.url(f"🌐 Open {d['name']}", live_url)])
+                    buttons.append([Button.url(f"📱 {d['name']} (In-App)", live_url)])
 
             await event.respond("\n".join(text_parts), buttons=buttons if buttons else None)
 
