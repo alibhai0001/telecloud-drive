@@ -10,7 +10,7 @@ from typing import Optional, List, Dict, Any
 from pathlib import Path
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Response, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Response, BackgroundTasks, Query, Header, Body
 from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,6 +23,7 @@ from telegram_service import telegram_service
 from gdrive_service import transfer_gdrive_to_telegram
 from task_manager import task_manager
 from bot_service import bot_service
+import otp_service
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("app")
@@ -1640,6 +1641,95 @@ async def serve_deployed_site(slug: str, subpath: str = "", background_tasks: Ba
         length=file_size
     )
     return StreamingResponse(stream_gen, headers=headers, media_type=mime_type)
+
+# ----------------- FastOTP Live Panel & Proxy Endpoints -----------------
+@app.get("/otp", response_class=HTMLResponse)
+@app.get("/fastotp", response_class=HTMLResponse)
+async def fastotp_ui():
+    otp_file = config.STATIC_DIR / "otp.html"
+    if otp_file.exists():
+        return FileResponse(otp_file)
+    return HTMLResponse("<h1>FastOTP Dashboard not found in static folder</h1>", status_code=404)
+
+@app.get("/api/otp/config")
+@app.get("/api/config")
+async def get_otp_config():
+    return JSONResponse(otp_service.get_config())
+
+@app.post("/api/otp/config")
+@app.post("/api/config")
+async def post_otp_config(payload: dict = Body(...)):
+    res = otp_service.update_config(
+        new_base_url=payload.get("base_url"),
+        new_api_key=payload.get("api_key")
+    )
+    return JSONResponse(res)
+
+@app.get("/api/otp/numbers")
+@app.get("/api/numbers")
+async def get_otp_numbers(
+    days: str = Query("2"),
+    key: Optional[str] = None,
+    api_key: Optional[str] = None,
+    base_url: Optional[str] = None,
+    x_api_key: Optional[str] = Header(None),
+    x_base_url: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None)
+):
+    resolved_key = otp_service.extract_api_key(key or api_key, x_api_key, authorization)
+    resolved_base = otp_service.extract_base_url(base_url, x_base_url)
+    res = await asyncio.to_thread(otp_service.fetch_numbers_sync, days, resolved_key, resolved_base)
+    return JSONResponse(res)
+
+@app.get("/api/otp/{phone}/sms")
+@app.get("/api/otp/sms/{phone}")
+@app.get("/api/{phone}/sms")
+@app.get("/api/sms/{phone}")
+async def get_otp_sms(
+    phone: str,
+    key: Optional[str] = None,
+    api_key: Optional[str] = None,
+    base_url: Optional[str] = None,
+    x_api_key: Optional[str] = Header(None),
+    x_base_url: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None)
+):
+    resolved_key = otp_service.extract_api_key(key or api_key, x_api_key, authorization)
+    resolved_base = otp_service.extract_base_url(base_url, x_base_url)
+    res = await asyncio.to_thread(otp_service.fetch_number_sms_sync, phone, resolved_key, resolved_base)
+    return JSONResponse(res)
+
+@app.get("/api/otp/panels_stats")
+@app.get("/api/otp/stats")
+@app.get("/api/panels_stats")
+async def get_otp_stats(
+    key: Optional[str] = None,
+    api_key: Optional[str] = None,
+    base_url: Optional[str] = None,
+    x_api_key: Optional[str] = Header(None),
+    x_base_url: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None)
+):
+    resolved_key = otp_service.extract_api_key(key or api_key, x_api_key, authorization)
+    resolved_base = otp_service.extract_base_url(base_url, x_base_url)
+    res = await asyncio.to_thread(otp_service.fetch_panels_stats_sync, resolved_key, resolved_base)
+    return JSONResponse(res)
+
+@app.get("/api/otp/status")
+@app.get("/api/otp_status")
+@app.get("/api/status")
+async def get_otp_api_status(
+    key: Optional[str] = None,
+    api_key: Optional[str] = None,
+    base_url: Optional[str] = None,
+    x_api_key: Optional[str] = Header(None),
+    x_base_url: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None)
+):
+    resolved_key = otp_service.extract_api_key(key or api_key, x_api_key, authorization)
+    resolved_base = otp_service.extract_base_url(base_url, x_base_url)
+    res = await asyncio.to_thread(otp_service.fetch_api_status_sync, resolved_key, resolved_base)
+    return JSONResponse(res)
 
 # ----------------- Search & Stats -----------------
 @app.get("/api/search")

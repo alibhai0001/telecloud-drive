@@ -1,0 +1,896 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>⚡ FastOTP Live Panel & SMS Hub</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚡</text></svg>">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: { 50: '#ecfdf5', 500: '#10b981', 600: '#059669', 700: '#047857' },
+            dark: { 800: '#1e293b', 850: '#162032', 900: '#0f172a', 950: '#090d16' }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    [x-cloak] { display: none !important; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #090d16; }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #475569; }
+    .glow-emerald { box-shadow: 0 0 25px rgba(16, 185, 129, 0.15); }
+    .glass-card { background: rgba(30, 41, 59, 0.6); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.07); }
+    .new-sms-flash { animation: flashGreen 1.5s ease-out; }
+    @keyframes flashGreen {
+      0% { background-color: rgba(16, 185, 129, 0.35); transform: scale(1.01); }
+      100% { background-color: rgba(30, 41, 59, 0.6); transform: scale(1); }
+    }
+  </style>
+  <script>
+    function fastOtpPanelApp() {
+      return {
+        // Active Valid Credentials
+        apiKey: 'ak_ZndDBHCdhTdZGjAnHKL88anOujiqHF1G',
+        baseUrl: 'https://fitting-along-bali-distributor.trycloudflare.com',
+
+        // Settings Modal State
+        showKeyModal: false,
+        tempApiKey: '',
+        tempBaseUrl: '',
+        saveToEnvServer: true,
+        isTestingConnection: false,
+        testResult: null,
+
+        // Data State
+        loadingNumbers: false,
+        loadingSms: false,
+        numbers: [],
+        daysFilter: '2',
+        statusFilter: 'active',
+        searchQuery: '',
+        pageSize: 60,
+        page: 1,
+
+        // Selected Number & Live SMS
+        selectedNumber: null,
+        smsHistory: [],
+        lastSmsHash: '',
+        autoRefresh: true,
+        refreshInterval: 3,
+        countdown: 3,
+        countdownTimer: null,
+        lastRefreshTime: '',
+
+        // Stats & UI
+        panelStats: null,
+        apiStatus: null,
+        soundEnabled: true,
+        toast: { show: false, message: '', type: 'success' },
+
+        showToast(msg, type = 'success') {
+          this.toast.message = msg;
+          this.toast.type = type;
+          this.toast.show = true;
+          setTimeout(() => { this.toast.show = false; }, 3200);
+        },
+
+        copyText(text, label = 'Copied') {
+          if (!text) return;
+          navigator.clipboard.writeText(text);
+          this.showToast(`${label}: ${text}`);
+        },
+
+        playBeep() {
+          if (!this.soundEnabled) return;
+          try {
+            const ctx = new (window.AudioContext || window.webkitAudioContext)();
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.frequency.setValueAtTime(587.33, ctx.currentTime);
+            osc.frequency.setValueAtTime(880, ctx.currentTime + 0.08);
+            gain.gain.setValueAtTime(0.18, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.32);
+            osc.start();
+            osc.stop(ctx.currentTime + 0.32);
+          } catch(e){}
+        },
+
+        openSettingsModal() {
+          this.tempApiKey = this.apiKey;
+          this.tempBaseUrl = this.baseUrl;
+          this.testResult = null;
+          this.showKeyModal = true;
+        },
+
+        async init() {
+          // Clean invalid legacy localStorage
+          const savedUrl = localStorage.getItem('fast_otp_panel_base_url');
+          const savedKey = localStorage.getItem('fast_otp_panel_api_key');
+
+          if (savedUrl && !savedUrl.includes('jan-invalid-isle')) {
+            this.baseUrl = savedUrl;
+          } else {
+            this.baseUrl = 'https://fitting-along-bali-distributor.trycloudflare.com';
+            localStorage.setItem('fast_otp_panel_base_url', this.baseUrl);
+          }
+
+          if (savedKey && !savedKey.includes('7EQtYszN8')) {
+            this.apiKey = savedKey;
+          } else {
+            this.apiKey = 'ak_ZndDBHCdhTdZGjAnHKL88anOujiqHF1G';
+            localStorage.setItem('fast_otp_panel_api_key', this.apiKey);
+          }
+
+          // Fetch server config
+          try {
+            const res = await fetch('/api/config');
+            if (res.ok) {
+              const cfg = await res.json();
+              if (cfg.base_url && !cfg.base_url.includes('jan-invalid-isle')) {
+                this.baseUrl = cfg.base_url;
+              }
+              if (cfg.api_key && !cfg.api_key.includes('7EQtYszN8')) {
+                this.apiKey = cfg.api_key;
+              }
+            }
+          } catch(e) {}
+
+          this.tempApiKey = this.apiKey;
+          this.tempBaseUrl = this.baseUrl;
+          await this.loadStats();
+          await this.loadNumbers();
+          this.startCountdownLoop();
+        },
+
+        async testConnection() {
+          if (!this.tempBaseUrl.trim() || !this.tempApiKey.trim()) {
+            this.showToast('Please enter both Base URL and API Key', 'error');
+            return;
+          }
+          this.isTestingConnection = true;
+          this.testResult = null;
+          const startTime = performance.now();
+          try {
+            const testBase = this.tempBaseUrl.trim().replace(/\/+$/, '');
+            const testKey = this.tempApiKey.trim();
+            const url = `/api/status?key=${encodeURIComponent(testKey)}&base_url=${encodeURIComponent(testBase)}`;
+            const res = await fetch(url);
+            const data = await res.json();
+            const latency = Math.round(performance.now() - startTime);
+
+            if (res.ok && data.ok) {
+              this.testResult = {
+                success: true,
+                message: `Connection Verified (${latency}ms)! Label: ${data.label || 'Adhaha'}, Rate: ${data.rate_per_sec || 5}/s, Expires: ${data.expires_in || 'Active'}`,
+                data: data
+              };
+              this.showToast('Connection verified successfully!');
+            } else {
+              this.testResult = {
+                success: false,
+                message: `Connection failed: ${data.detail || data.error || 'Invalid API Key or Base URL'}`
+              };
+              this.showToast('Test failed: Check Base URL & Key', 'error');
+            }
+          } catch(e) {
+            this.testResult = {
+              success: false,
+              message: `Network Error: ${e.message}`
+            };
+            this.showToast('Network error during test', 'error');
+          } finally {
+            this.isTestingConnection = false;
+          }
+        },
+
+        async saveConfig() {
+          if (!this.tempBaseUrl.trim() || !this.tempApiKey.trim()) {
+            this.showToast('Base URL and API Key cannot be empty', 'error');
+            return;
+          }
+          
+          this.baseUrl = this.tempBaseUrl.trim().replace(/\/+$/, '');
+          this.apiKey = this.tempApiKey.trim();
+
+          localStorage.setItem('fast_otp_panel_base_url', this.baseUrl);
+          localStorage.setItem('fast_otp_panel_api_key', this.apiKey);
+
+          // Update backend config & .env file
+          try {
+            await fetch('/api/config', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                base_url: this.baseUrl,
+                api_key: this.apiKey,
+                save_to_env: this.saveToEnvServer
+              })
+            });
+          } catch(e) {
+            console.error('Failed to sync config with backend:', e);
+          }
+
+          this.showKeyModal = false;
+          this.showToast('Base URL & API Key applied successfully!');
+          
+          // Refresh everything
+          this.selectedNumber = null;
+          this.smsHistory = [];
+          await this.loadStats();
+          await this.loadNumbers();
+        },
+
+        resetToDefaults() {
+          this.tempBaseUrl = 'https://fitting-along-bali-distributor.trycloudflare.com';
+          this.tempApiKey = 'ak_ZndDBHCdhTdZGjAnHKL88anOujiqHF1G';
+          this.testResult = null;
+          this.showToast('Reset fields to defaults. Click "Save & Apply" to confirm.');
+        },
+
+        async loadStats() {
+          try {
+            const [rStats, rStatus] = await Promise.all([
+              fetch(`/api/panels_stats?key=${encodeURIComponent(this.apiKey)}&base_url=${encodeURIComponent(this.baseUrl)}`),
+              fetch(`/api/status?key=${encodeURIComponent(this.apiKey)}&base_url=${encodeURIComponent(this.baseUrl)}`)
+            ]);
+            if (rStats.ok) this.panelStats = await rStats.json();
+            if (rStatus.ok) this.apiStatus = await rStatus.json();
+          } catch(e) {
+            console.error('Stats error:', e);
+          }
+        },
+
+        async loadNumbers() {
+          this.loadingNumbers = true;
+          try {
+            const url = `/api/numbers?days=${this.daysFilter}&key=${encodeURIComponent(this.apiKey)}&base_url=${encodeURIComponent(this.baseUrl)}`;
+            const res = await fetch(url);
+            const data = await res.json();
+            if (data.ok && Array.isArray(data.numbers)) {
+              this.numbers = data.numbers;
+              this.page = 1;
+              this.showToast(`Loaded ${data.numbers.length} numbers (${data.active_count || 0} active)`);
+            } else {
+              this.showToast(data.detail || 'Failed to fetch numbers', 'error');
+            }
+          } catch(e) {
+            this.showToast('Network error loading numbers: ' + e.message, 'error');
+          } finally {
+            this.loadingNumbers = false;
+          }
+        },
+
+        get filteredNumbers() {
+          let list = this.numbers || [];
+          if (this.statusFilter === 'active') {
+            list = list.filter(n => n.status === 'active');
+          } else if (this.statusFilter === 'inactive') {
+            list = list.filter(n => n.status !== 'active');
+          }
+
+          if (this.searchQuery.trim()) {
+            const q = this.searchQuery.toLowerCase().trim();
+            list = list.filter(n => 
+              (n.number && n.number.toLowerCase().includes(q)) ||
+              (n.panel && n.panel.toLowerCase().includes(q)) ||
+              (n.last_sms && n.last_sms.toLowerCase().includes(q)) ||
+              (n.sender && n.sender.toLowerCase().includes(q))
+            );
+          }
+          return list;
+        },
+
+        get paginatedNumbers() {
+          return this.filteredNumbers.slice(0, this.page * this.pageSize);
+        },
+
+        loadMore() {
+          this.page++;
+        },
+
+        async selectNumber(item) {
+          if (!item) return;
+          this.selectedNumber = item;
+          this.smsHistory = [];
+          this.lastSmsHash = '';
+          this.countdown = this.refreshInterval;
+          await this.fetchSms(false);
+          this.resetAutoPoll();
+        },
+
+        async fetchSms(isBackgroundPoll = false) {
+          if (!this.selectedNumber || !this.selectedNumber.number) return;
+          if (!isBackgroundPoll) this.loadingSms = true;
+          try {
+            const phone = this.selectedNumber.number;
+            const url = `/api/${phone}/sms?key=${encodeURIComponent(this.apiKey)}&base_url=${encodeURIComponent(this.baseUrl)}`;
+            const res = await fetch(url);
+            const data = await res.json();
+            this.lastRefreshTime = new Date().toLocaleTimeString();
+
+            if (data.ok && Array.isArray(data.sms)) {
+              const newSmsList = data.sms;
+              
+              if (newSmsList.length > 0) {
+                const currentHash = (newSmsList[0].timestamp || '') + '_' + (newSmsList[0].otp || '') + '_' + newSmsList[0].message;
+                if (this.lastSmsHash && this.lastSmsHash !== currentHash) {
+                  this.playBeep();
+                  const otpText = newSmsList[0].otp ? ` [OTP: ${newSmsList[0].otp}]` : '';
+                  this.showToast(`🎉 New SMS from ${newSmsList[0].sender || 'Unknown'}${otpText}`);
+                }
+                this.lastSmsHash = currentHash;
+              }
+
+              this.smsHistory = newSmsList;
+              if (data.status) this.selectedNumber.status = data.status;
+            } else if (!isBackgroundPoll) {
+              this.smsHistory = [];
+            }
+          } catch(e) {
+            if (!isBackgroundPoll) {
+              this.showToast('Error fetching SMS: ' + e.message, 'error');
+            }
+          } finally {
+            if (!isBackgroundPoll) this.loadingSms = false;
+          }
+        },
+
+        startCountdownLoop() {
+          if (this.countdownTimer) clearInterval(this.countdownTimer);
+          this.countdownTimer = setInterval(() => {
+            if (!this.autoRefresh || !this.selectedNumber) return;
+            if (this.countdown > 1) {
+              this.countdown--;
+            } else {
+              this.countdown = this.refreshInterval;
+              this.fetchSms(true);
+            }
+          }, 1000);
+        },
+
+        resetAutoPoll() {
+          this.countdown = this.refreshInterval;
+        },
+
+        toggleAutoRefresh() {
+          this.autoRefresh = !this.autoRefresh;
+          if (this.autoRefresh) {
+            this.countdown = this.refreshInterval;
+            this.showToast('Auto-Refresh Activated');
+          } else {
+            this.showToast('Auto-Refresh Paused');
+          }
+        },
+
+        extractOtp(sms) {
+          if (sms.otp && sms.otp.trim()) return sms.otp.trim();
+          if (!sms.message) return '';
+          const hyphenMatch = sms.message.match(/\b(\d{3}-\d{3})\b/);
+          if (hyphenMatch) return hyphenMatch[1];
+          const m = sms.message.match(/\b(\d{4,8})\b/);
+          return m ? m[1] : '';
+        },
+
+        getBaseHost() {
+          try {
+            return new URL(this.baseUrl).hostname;
+          } catch(e) {
+            return this.baseUrl.replace(/^https?:\/\//, '').split('/')[0] || 'Cloudflare';
+          }
+        }
+      }
+    }
+  </script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body class="bg-dark-950 text-slate-100 min-h-screen font-sans antialiased flex flex-col" x-data="fastOtpPanelApp()" x-init="init()">
+
+  <!-- Toast Notification -->
+  <div x-show="toast.show" x-cloak x-transition class="fixed bottom-6 right-6 z-50 max-w-md bg-dark-850 border border-slate-700 text-slate-100 px-4 py-3 rounded-xl shadow-2xl flex items-center space-x-3 glow-emerald">
+    <i :class="toast.type === 'error' ? 'fa-solid fa-triangle-exclamation text-rose-400' : 'fa-solid fa-circle-check text-emerald-400'" class="text-lg"></i>
+    <span class="text-sm font-medium" x-text="toast.message"></span>
+  </div>
+
+  <!-- Top Navigation Header -->
+  <header class="border-b border-slate-800 bg-dark-900/90 backdrop-blur sticky top-0 z-40">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      
+      <!-- Brand & Title -->
+      <div class="flex items-center space-x-3">
+        <div class="h-10 w-10 rounded-xl bg-gradient-to-tr from-emerald-500 to-cyan-500 flex items-center justify-center text-white shadow-lg shadow-emerald-500/20 font-bold text-xl">
+          ⚡
+        </div>
+        <div>
+          <div class="flex items-center space-x-2">
+            <h1 class="font-bold text-lg bg-gradient-to-r from-emerald-400 via-teal-300 to-cyan-400 bg-clip-text text-transparent">FastOTP Live Panel</h1>
+            <span class="text-xs bg-emerald-950/90 border border-emerald-500/40 text-emerald-400 px-2 py-0.5 rounded-full font-mono font-semibold flex items-center space-x-1">
+              <span class="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+              <span>LIVE HUB</span>
+            </span>
+          </div>
+          <p class="text-xs text-slate-400">High-Speed Real-Time SIMs Explorer • Instant OTP Receiver</p>
+        </div>
+      </div>
+
+      <!-- Quick Stats & Action Buttons -->
+      <div class="flex items-center space-x-2 sm:space-x-3">
+        
+        <!-- Live Online Count Badge -->
+        <div class="hidden md:flex items-center space-x-2 bg-dark-800 border border-slate-700 px-3 py-1.5 rounded-xl text-xs">
+          <i class="fa-solid fa-sim-card text-emerald-400"></i>
+          <span class="text-slate-400">Active SIMs:</span>
+          <span class="font-bold text-emerald-400 font-mono" x-text="panelStats?.total_active || numbers.filter(x => x.status === 'active').length || '...'"></span>
+        </div>
+
+        <!-- Panels Connected Badge -->
+        <div class="hidden lg:flex items-center space-x-2 bg-dark-800 border border-slate-700 px-3 py-1.5 rounded-xl text-xs">
+          <i class="fa-solid fa-server text-cyan-400"></i>
+          <span class="text-slate-400">Panels:</span>
+          <span class="font-bold text-cyan-400 font-mono" x-text="panelStats?.total_panels || '...'"></span>
+        </div>
+
+        <!-- Sound Alert Toggle -->
+        <button @click="soundEnabled = !soundEnabled; showToast(soundEnabled ? 'Sound alert enabled' : 'Sound alert muted')" 
+                :title="soundEnabled ? 'Mute Sound Alerts' : 'Enable Sound Alerts'"
+                class="bg-dark-800 hover:bg-dark-700 border border-slate-700 text-slate-300 p-2 rounded-xl text-xs transition cursor-pointer">
+          <i :class="soundEnabled ? 'fa-solid fa-volume-high text-emerald-400' : 'fa-solid fa-volume-xmark text-slate-500'"></i>
+        </button>
+
+        <!-- Base URL & API Key Settings Trigger Button -->
+        <button @click="openSettingsModal()" 
+                title="Edit Base URL & API Key"
+                class="flex items-center space-x-2 bg-gradient-to-r from-emerald-600/20 to-teal-600/20 hover:from-emerald-600/30 hover:to-teal-600/30 border border-emerald-500/40 text-emerald-300 px-3 py-1.5 rounded-xl text-xs font-semibold transition cursor-pointer shadow-sm">
+          <i class="fa-solid fa-sliders text-emerald-400"></i>
+          <span class="hidden sm:inline">Settings (URL & Key)</span>
+          <span class="sm:hidden">Config</span>
+        </button>
+
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content Split Screen -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-5 flex-1 w-full grid grid-cols-1 lg:grid-cols-12 gap-5 overflow-hidden">
+    
+    <!-- LEFT COLUMN: Numbers Explorer (lg:col-span-5) -->
+    <div class="lg:col-span-5 flex flex-col h-[calc(100vh-6.5rem)] glass-card rounded-2xl overflow-hidden shadow-xl">
+      
+      <!-- Top Bar: Search & Filters -->
+      <div class="p-4 border-b border-slate-800/80 bg-dark-900/60 space-y-3">
+        
+        <!-- Active Upstream Connection Tag -->
+        <div class="flex items-center justify-between text-[11px] bg-dark-950 px-2.5 py-1 rounded-lg border border-slate-800 text-slate-400 font-mono">
+          <div class="flex items-center space-x-1.5 truncate max-w-[240px]">
+            <span class="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
+            <span class="truncate text-slate-300" x-text="getBaseHost()"></span>
+          </div>
+          <button @click="openSettingsModal()" class="text-emerald-400 hover:text-emerald-300 font-medium underline flex items-center space-x-1">
+            <i class="fa-solid fa-pen-to-square text-[10px]"></i>
+            <span>Edit</span>
+          </button>
+        </div>
+
+        <!-- Search Input with Clear -->
+        <div class="relative">
+          <i class="fa-solid fa-magnifying-glass absolute left-3.5 top-3 text-slate-400 text-sm"></i>
+          <input type="text" 
+                 x-model="searchQuery" 
+                 placeholder="Search number, panel, or SMS snippet..." 
+                 class="w-full bg-dark-950/80 border border-slate-700/80 rounded-xl pl-10 pr-9 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition">
+          <button x-show="searchQuery" 
+                  @click="searchQuery = ''" 
+                  class="absolute right-3 top-2.5 text-slate-500 hover:text-slate-300">
+            <i class="fa-solid fa-xmark text-xs"></i>
+          </button>
+        </div>
+
+        <!-- Filter Controls: Days & Status -->
+        <div class="flex items-center justify-between text-xs space-x-2 pt-1">
+          <!-- Days Filter Pills -->
+          <div class="flex items-center bg-dark-950 p-0.5 rounded-lg border border-slate-800 font-medium">
+            <button @click="daysFilter = '1'; loadNumbers()" :class="daysFilter === '1' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-slate-200'" class="px-2.5 py-1 rounded-md transition cursor-pointer">1D</button>
+            <button @click="daysFilter = '2'; loadNumbers()" :class="daysFilter === '2' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-slate-200'" class="px-2.5 py-1 rounded-md transition cursor-pointer">2D</button>
+            <button @click="daysFilter = '7'; loadNumbers()" :class="daysFilter === '7' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-slate-200'" class="px-2.5 py-1 rounded-md transition cursor-pointer">7D</button>
+            <button @click="daysFilter = 'all'; loadNumbers()" :class="daysFilter === 'all' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-slate-200'" class="px-2.5 py-1 rounded-md transition cursor-pointer">ALL</button>
+          </div>
+
+          <!-- Status Filter -->
+          <div class="flex items-center bg-dark-950 p-0.5 rounded-lg border border-slate-800 font-medium">
+            <button @click="statusFilter = 'active'" :class="statusFilter === 'active' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40' : 'text-slate-400 hover:text-slate-200'" class="px-2.5 py-1 rounded-md transition cursor-pointer flex items-center space-x-1">
+              <span class="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
+              <span>Active</span>
+            </button>
+            <button @click="statusFilter = 'all'" :class="statusFilter === 'all' ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-slate-200'" class="px-2.5 py-1 rounded-md transition cursor-pointer">
+              All
+            </button>
+          </div>
+
+          <!-- Refresh Numbers Button -->
+          <button @click="loadNumbers()" 
+                  :disabled="loadingNumbers"
+                  class="bg-dark-800 hover:bg-dark-700 text-slate-300 p-1.5 rounded-lg border border-slate-700 transition cursor-pointer" title="Refresh Numbers List">
+            <i :class="loadingNumbers ? 'fa-solid fa-arrows-rotate fa-spin text-emerald-400' : 'fa-solid fa-arrows-rotate'"></i>
+          </button>
+        </div>
+
+        <!-- Summary Count Info -->
+        <div class="flex items-center justify-between text-[11px] text-slate-400 px-1 font-mono">
+          <span>SHOWING: <strong class="text-emerald-400" x-text="paginatedNumbers.length"></strong> / <span x-text="filteredNumbers.length"></span></span>
+          <span x-text="loadingNumbers ? 'Scanning SIMs...' : 'Sorted by Last SMS'"></span>
+        </div>
+
+      </div>
+
+      <!-- Numbers List Scroll Area -->
+      <div class="flex-1 overflow-y-auto divide-y divide-slate-800/60 p-2 space-y-1">
+        
+        <!-- Loading State -->
+        <template x-if="loadingNumbers && numbers.length === 0">
+          <div class="py-16 text-center text-slate-500 space-y-3">
+            <i class="fa-solid fa-circle-notch fa-spin text-3xl text-emerald-500"></i>
+            <p class="text-sm font-medium">Fetching online numbers from Cloudflare...</p>
+          </div>
+        </template>
+
+        <!-- Empty State -->
+        <template x-if="!loadingNumbers && paginatedNumbers.length === 0">
+          <div class="py-16 text-center text-slate-500 space-y-3">
+            <i class="fa-solid fa-phone-slash text-3xl text-slate-600"></i>
+            <p class="text-sm">No matching numbers found</p>
+            <button @click="searchQuery = ''; statusFilter = 'all'" class="text-xs text-emerald-400 hover:underline">Reset search filters</button>
+          </div>
+        </template>
+
+        <!-- Number Item Cards -->
+        <template x-for="(item, idx) in paginatedNumbers" :key="item.number">
+          <div @click="selectNumber(item)" 
+               :class="selectedNumber && selectedNumber.number === item.number ? 'bg-emerald-950/40 border-emerald-500/50 glow-emerald' : 'bg-dark-900/40 hover:bg-dark-850/80 border-slate-800/80'"
+               class="p-3 rounded-xl border transition-all cursor-pointer group space-y-1.5">
+            
+            <!-- Card Header: Phone + Online Dot + Panel -->
+            <div class="flex items-center justify-between">
+              <div class="flex items-center space-x-2">
+                <span :class="item.status === 'active' ? 'bg-emerald-400 shadow-emerald-400/50' : 'bg-slate-500'" class="h-2 w-2 rounded-full shadow-sm"></span>
+                <span class="font-mono font-bold text-sm tracking-wider text-slate-100 group-hover:text-emerald-400 transition" x-text="item.number"></span>
+                <button @click.stop="copyText(item.number, 'Phone Number')" title="Copy Number" class="text-slate-500 hover:text-emerald-400 opacity-60 group-hover:opacity-100 p-0.5 text-xs transition">
+                  <i class="fa-regular fa-copy"></i>
+                </button>
+              </div>
+
+              <div class="flex items-center space-x-1.5">
+                <span class="text-[10px] bg-dark-950 text-cyan-400 border border-cyan-900/40 px-1.5 py-0.5 rounded font-mono font-medium" x-text="item.panel || 'Panel'"></span>
+                <span class="text-[10px] text-slate-500 font-mono" x-text="item.last_active_ago || ''"></span>
+              </div>
+            </div>
+
+            <!-- Last SMS Snippet -->
+            <div class="text-xs text-slate-400 line-clamp-1 group-hover:text-slate-300 font-sans" x-text="item.last_sms || 'No recent SMS preview'"></div>
+
+            <!-- Card Footer: Sender & SMS Count -->
+            <div class="flex items-center justify-between text-[11px] text-slate-500 pt-0.5">
+              <span class="font-mono text-slate-400" x-text="item.sender ? 'From: ' + item.sender : ''"></span>
+              <span class="bg-dark-950/90 text-slate-400 px-1.5 py-0.5 rounded text-[10px]">
+                <i class="fa-solid fa-message text-[9px] mr-1 text-emerald-400"></i>
+                <span x-text="(item.sms_count || 1) + ' SMS'"></span>
+              </span>
+            </div>
+
+          </div>
+        </template>
+
+        <!-- Load More Button -->
+        <template x-if="paginatedNumbers.length < filteredNumbers.length">
+          <div class="pt-2 pb-1 text-center">
+            <button @click="loadMore()" class="w-full bg-dark-900 hover:bg-dark-800 border border-slate-700/80 text-slate-300 py-2 rounded-xl text-xs font-semibold transition cursor-pointer">
+              Load More Numbers (+60)
+            </button>
+          </div>
+        </template>
+
+      </div>
+
+    </div>
+
+
+    <!-- RIGHT COLUMN: Selected Number & Live SMS History (lg:col-span-7) -->
+    <div class="lg:col-span-7 flex flex-col h-[calc(100vh-6.5rem)] glass-card rounded-2xl overflow-hidden shadow-xl">
+      
+      <!-- WHEN A NUMBER IS SELECTED -->
+      <template x-if="selectedNumber">
+        <div class="flex flex-col h-full">
+          
+          <!-- Top Header of Selected Number -->
+          <div class="p-4 border-b border-slate-800/80 bg-dark-900/80 space-y-3">
+            
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              
+              <!-- Number Info Display -->
+              <div class="flex items-center space-x-3">
+                <div class="h-11 w-11 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-500 flex items-center justify-center text-white shadow-lg shadow-emerald-500/20 text-lg">
+                  <i class="fa-solid fa-phone"></i>
+                </div>
+                <div>
+                  <div class="flex items-center space-x-2">
+                    <span class="font-mono font-extrabold text-xl text-white tracking-wide" x-text="selectedNumber.number"></span>
+                    <button @click="copyText(selectedNumber.number, 'Phone Number')" title="Copy Phone Number" class="bg-dark-800 hover:bg-dark-700 text-slate-300 hover:text-emerald-400 px-2 py-1 rounded-lg text-xs border border-slate-700 transition cursor-pointer">
+                      <i class="fa-regular fa-copy mr-1"></i> Copy
+                    </button>
+                  </div>
+                  <div class="flex items-center space-x-2 text-xs text-slate-400 mt-0.5">
+                    <span class="text-cyan-400 font-mono font-medium" x-text="selectedNumber.panel || 'Online Panel'"></span>
+                    <span>•</span>
+                    <span :class="selectedNumber.status === 'active' ? 'text-emerald-400' : 'text-slate-400'" class="font-medium flex items-center space-x-1">
+                      <span :class="selectedNumber.status === 'active' ? 'bg-emerald-400' : 'bg-slate-500'" class="h-1.5 w-1.5 rounded-full inline-block"></span>
+                      <span x-text="selectedNumber.status === 'active' ? 'ACTIVE / ONLINE' : 'INACTIVE'"></span>
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Auto-Refresh Controls -->
+              <div class="flex items-center space-x-2">
+                
+                <!-- Auto-Refresh Toggle Button -->
+                <button @click="toggleAutoRefresh()" 
+                        :class="autoRefresh ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300 glow-emerald' : 'bg-dark-800 border-slate-700 text-slate-400'"
+                        class="px-3 py-1.5 rounded-xl border text-xs font-semibold flex items-center space-x-2 transition cursor-pointer">
+                  <span :class="autoRefresh ? 'bg-emerald-400 animate-ping' : 'bg-slate-500'" class="h-2 w-2 rounded-full"></span>
+                  <span x-text="autoRefresh ? 'AUTO-POLL: ON' : 'AUTO-POLL: OFF'"></span>
+                </button>
+
+                <!-- Interval Selector Dropdown -->
+                <div class="flex items-center bg-dark-950 border border-slate-800 rounded-xl px-2 py-1 text-xs">
+                  <i class="fa-solid fa-clock text-slate-500 text-[10px] mr-1.5"></i>
+                  <select x-model.number="refreshInterval" @change="resetAutoPoll()" class="bg-transparent text-slate-300 text-xs font-mono focus:outline-none cursor-pointer">
+                    <option value="2">2s</option>
+                    <option value="3">3s</option>
+                    <option value="5">5s</option>
+                    <option value="10">10s</option>
+                  </select>
+                </div>
+
+                <!-- Manual Fetch Button -->
+                <button @click="fetchSms(false); resetAutoPoll()" 
+                        :disabled="loadingSms"
+                        class="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center space-x-1.5 transition cursor-pointer shadow-md shadow-emerald-600/20">
+                  <i :class="loadingSms ? 'fa-solid fa-arrows-rotate fa-spin' : 'fa-solid fa-arrows-rotate'"></i>
+                  <span class="hidden sm:inline">Fetch</span>
+                </button>
+
+              </div>
+
+            </div>
+
+            <!-- Auto-Refresh Progress Countdown Bar -->
+            <div x-show="autoRefresh" class="space-y-1">
+              <div class="flex items-center justify-between text-[10px] font-mono text-slate-500">
+                <span>NEXT AUTO-POLL IN: <strong class="text-emerald-400" x-text="countdown + 's'"></strong></span>
+                <span x-text="lastRefreshTime ? 'Last fetched: ' + lastRefreshTime : 'Polling active'"></span>
+              </div>
+              <div class="w-full bg-dark-950 h-1 rounded-full overflow-hidden">
+                <div class="bg-gradient-to-r from-emerald-500 to-cyan-500 h-full transition-all duration-1000 ease-linear rounded-full"
+                     :style="'width: ' + ((countdown / refreshInterval) * 100) + '%'"></div>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- SMS History List View -->
+          <div class="flex-1 overflow-y-auto p-4 space-y-3 bg-dark-950/40">
+            
+            <!-- Loading Indicator for Initial Click -->
+            <template x-if="loadingSms && smsHistory.length === 0">
+              <div class="py-20 text-center text-slate-500 space-y-3">
+                <i class="fa-solid fa-spinner fa-spin text-3xl text-emerald-500"></i>
+                <p class="text-sm font-medium">Fetching real-time SMS messages...</p>
+              </div>
+            </template>
+
+            <!-- No SMS Found -->
+            <template x-if="!loadingSms && smsHistory.length === 0">
+              <div class="py-20 text-center text-slate-500 space-y-3">
+                <i class="fa-regular fa-comment-dots text-4xl text-slate-600"></i>
+                <p class="text-sm">No incoming messages received yet on this number</p>
+                <p class="text-xs text-slate-600">Auto-refresh is active and listening for incoming OTP...</p>
+              </div>
+            </template>
+
+            <!-- SMS Message Cards -->
+            <template x-for="(sms, sIdx) in smsHistory" :key="sms.timestamp || sIdx">
+              <div :class="sIdx === 0 ? 'border-emerald-500/40 bg-dark-900/90 glow-emerald new-sms-flash' : 'border-slate-800 bg-dark-900/60'"
+                   class="p-4 rounded-2xl border transition-all space-y-3">
+                
+                <!-- Card Header: Sender + Time + Received Ago -->
+                <div class="flex items-center justify-between border-b border-slate-800/80 pb-2.5">
+                  <div class="flex items-center space-x-2">
+                    <span class="h-2 w-2 rounded-full bg-emerald-400"></span>
+                    <span class="font-mono font-bold text-sm text-cyan-300" x-text="sms.sender || 'UNKNOWN SENDER'"></span>
+                  </div>
+
+                  <div class="flex items-center space-x-2 text-xs font-mono text-slate-400">
+                    <span class="bg-dark-950 px-2 py-0.5 rounded text-emerald-400 font-medium" x-text="sms.received_ago || 'just now'"></span>
+                    <span class="text-slate-600">•</span>
+                    <span class="text-slate-500 text-[11px]" x-text="sms.timestamp ? new Date(sms.timestamp).toLocaleTimeString() : ''"></span>
+                  </div>
+                </div>
+
+                <!-- OTP Callout Highlight (If OTP found) -->
+                <template x-if="extractOtp(sms)">
+                  <div class="bg-gradient-to-r from-emerald-950/80 via-emerald-900/40 to-dark-900 border border-emerald-500/50 rounded-xl p-3 flex items-center justify-between glow-emerald">
+                    <div class="flex items-center space-x-3">
+                      <div class="h-9 w-9 rounded-lg bg-emerald-500 text-dark-950 flex items-center justify-center font-bold text-base shadow">
+                        <i class="fa-solid fa-key"></i>
+                      </div>
+                      <div>
+                        <div class="text-[10px] text-emerald-300 font-semibold tracking-wider uppercase">DETECTED OTP</div>
+                        <div class="font-mono font-extrabold text-2xl text-emerald-400 tracking-widest" x-text="extractOtp(sms)"></div>
+                      </div>
+                    </div>
+
+                    <button @click="copyText(extractOtp(sms), 'OTP Code')" 
+                            class="bg-emerald-500 hover:bg-emerald-400 text-dark-950 font-bold px-3.5 py-2 rounded-lg text-xs transition flex items-center space-x-1.5 shadow-lg shadow-emerald-500/30 cursor-pointer">
+                      <i class="fa-regular fa-copy"></i>
+                      <span>COPY OTP</span>
+                    </button>
+                  </div>
+                </template>
+
+                <!-- Full SMS Text Message Body -->
+                <div class="text-sm text-slate-200 leading-relaxed font-sans select-text whitespace-pre-wrap break-words bg-dark-950/60 p-3 rounded-xl border border-slate-800/60" x-text="sms.message"></div>
+
+                <!-- Footer Quick Actions -->
+                <div class="flex items-center justify-between pt-1 text-[11px] text-slate-500">
+                  <span>Message length: <span x-text="sms.message ? sms.message.length : 0"></span> chars</span>
+                  <button @click="copyText(sms.message, 'Full Message')" class="text-slate-400 hover:text-slate-200 transition cursor-pointer flex items-center space-x-1">
+                    <i class="fa-regular fa-copy"></i>
+                    <span>Copy SMS Text</span>
+                  </button>
+                </div>
+
+              </div>
+            </template>
+
+          </div>
+
+        </div>
+      </template>
+
+      <!-- WHEN NO NUMBER IS SELECTED (EMPTY STATE) -->
+      <template x-if="!selectedNumber">
+        <div class="flex-1 flex flex-col items-center justify-center p-8 text-center space-y-4">
+          <div class="h-20 w-20 rounded-3xl bg-gradient-to-tr from-emerald-500/20 to-cyan-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 text-3xl shadow-xl glow-emerald">
+            <i class="fa-solid fa-satellite-dish"></i>
+          </div>
+          <div class="space-y-1.5 max-w-sm">
+            <h3 class="text-lg font-bold text-white">Select a Number to View SMS</h3>
+            <p class="text-xs text-slate-400 leading-relaxed">
+              Click on any online number from the left list to inspect its live incoming SMS messages and receive new OTP codes in real-time.
+            </p>
+          </div>
+          <div class="pt-2 flex items-center space-x-2 text-xs text-slate-500 font-mono">
+            <span class="h-2 w-2 rounded-full bg-emerald-400"></span>
+            <span>Real-time Multi-Panel SIM Hub Ready</span>
+          </div>
+        </div>
+      </template>
+
+    </div>
+
+  </main>
+
+  <!-- ========================================================================= -->
+  <!-- ⚙️ BASE URL & API KEY CONFIGURATION MODAL                                -->
+  <!-- ========================================================================= -->
+  <div x-show="showKeyModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
+    <div @click.outside="showKeyModal = false" class="bg-dark-900 border border-slate-700/80 rounded-2xl p-6 max-w-lg w-full space-y-5 glow-emerald shadow-2xl">
+      
+      <!-- Modal Header -->
+      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+        <div class="flex items-center space-x-2.5">
+          <div class="h-8 w-8 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-sm font-bold">
+            <i class="fa-solid fa-sliders"></i>
+          </div>
+          <div>
+            <h3 class="font-bold text-base text-slate-100">Edit Base URL & API Key</h3>
+            <p class="text-[11px] text-slate-400">Customize Cloudflare upstream URL and authentication key</p>
+          </div>
+        </div>
+        <button @click="showKeyModal = false" class="text-slate-400 hover:text-slate-200 p-1 cursor-pointer">
+          <i class="fa-solid fa-xmark text-lg"></i>
+        </button>
+      </div>
+
+      <!-- Modal Inputs -->
+      <div class="space-y-4">
+        
+        <!-- Editable Base URL Field -->
+        <div>
+          <div class="flex items-center justify-between mb-1.5">
+            <label class="text-xs font-bold text-slate-300 flex items-center space-x-1.5">
+              <i class="fa-solid fa-globe text-cyan-400"></i>
+              <span>CLOUDFLARE BASE URL:</span>
+            </label>
+            <span class="text-[10px] text-slate-500 font-mono">e.g. https://xxxx.trycloudflare.com</span>
+          </div>
+          <input type="text" 
+                 x-model="tempBaseUrl" 
+                 placeholder="https://fitting-along-bali-distributor.trycloudflare.com" 
+                 class="w-full bg-dark-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs font-mono text-cyan-300 placeholder-slate-600 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition">
+        </div>
+
+        <!-- Editable API Key Field -->
+        <div>
+          <div class="flex items-center justify-between mb-1.5">
+            <label class="text-xs font-bold text-slate-300 flex items-center space-x-1.5">
+              <i class="fa-solid fa-key text-amber-400"></i>
+              <span>API KEY:</span>
+            </label>
+            <span class="text-[10px] text-slate-500 font-mono">e.g. ak_...</span>
+          </div>
+          <input type="text" 
+                 x-model="tempApiKey" 
+                 placeholder="ak_ZndDBHCdhTdZGjAnHKL88anOujiqHF1G" 
+                 class="w-full bg-dark-950 border border-slate-700 rounded-xl px-3.5 py-2.5 text-xs font-mono text-emerald-400 placeholder-slate-600 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition">
+        </div>
+
+        <!-- Test Connection Bar & Result -->
+        <div class="space-y-2 pt-1">
+          <div class="flex items-center justify-between">
+            <button @click="testConnection()" 
+                    :disabled="isTestingConnection"
+                    class="bg-dark-800 hover:bg-dark-700 border border-slate-700 text-slate-200 px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center space-x-1.5 transition cursor-pointer">
+              <i :class="isTestingConnection ? 'fa-solid fa-circle-notch fa-spin text-cyan-400' : 'fa-solid fa-bolt text-amber-400'"></i>
+              <span>Test Connection</span>
+            </button>
+
+            <button @click="resetToDefaults()" class="text-[11px] text-slate-400 hover:text-slate-200 underline cursor-pointer">
+              Reset to Defaults
+            </button>
+          </div>
+
+          <!-- Test Result Banner -->
+          <template x-if="testResult">
+            <div :class="testResult.success ? 'bg-emerald-950/60 border-emerald-500/50 text-emerald-300' : 'bg-rose-950/60 border-rose-500/50 text-rose-300'"
+                 class="p-3 rounded-xl border text-xs flex items-start space-x-2">
+              <i :class="testResult.success ? 'fa-solid fa-circle-check text-emerald-400' : 'fa-solid fa-triangle-exclamation text-rose-400'" class="mt-0.5"></i>
+              <div class="flex-1 font-mono text-[11px]" x-text="testResult.message"></div>
+            </div>
+          </template>
+        </div>
+
+        <!-- Checkbox to update .env on server -->
+        <div class="flex items-center space-x-2 pt-1">
+          <input type="checkbox" id="saveEnvCheck" x-model="saveToEnvServer" class="rounded bg-dark-950 border-slate-700 text-emerald-500 focus:ring-emerald-500 h-4 w-4">
+          <label for="saveEnvCheck" class="text-xs text-slate-300 select-none cursor-pointer">
+            Save permanently on server (.env file)
+          </label>
+        </div>
+
+      </div>
+
+      <!-- Modal Footer Action Buttons -->
+      <div class="flex items-center justify-end space-x-3 pt-3 border-t border-slate-800">
+        <button @click="showKeyModal = false" class="px-4 py-2 text-xs font-semibold text-slate-400 hover:text-slate-200 cursor-pointer">
+          Cancel
+        </button>
+        <button @click="saveConfig()" class="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold px-5 py-2 rounded-xl text-xs shadow-lg shadow-emerald-600/30 transition cursor-pointer flex items-center space-x-1.5">
+          <i class="fa-solid fa-check"></i>
+          <span>Save & Apply</span>
+        </button>
+      </div>
+
+    </div>
+  </div>
+
+</body>
+</html>

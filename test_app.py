@@ -134,8 +134,23 @@ async def test_deployment_system():
     # Clean up folder
     await database.delete_folder_recursive(folder_id)
 
+async def test_otp_service():
+    import otp_service
+    # Test extract key & url
+    k = otp_service.extract_api_key("custom_key")
+    assert k == "custom_key"
+    u = otp_service.extract_base_url("https://custom.com")
+    assert u == "https://custom.com"
+
+    cfg = otp_service.get_config()
+    assert cfg["ok"] is True
+    assert "base_url" in cfg
+    assert "api_key" in cfg
+    print("[OK] FastOTP Service Config passed")
+
 if __name__ == "__main__":
     asyncio.run(test_gdrive_extraction())
     asyncio.run(test_database_folders_and_shares())
     asyncio.run(test_deployment_system())
-    print("[SUCCESS] All backend & deployment tests passed successfully!")
+    asyncio.run(test_otp_service())
+    print("[SUCCESS] All backend, deployment & FastOTP tests passed successfully!")

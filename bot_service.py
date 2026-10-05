@@ -11,6 +11,7 @@ from telethon.tl.types import DocumentAttributeFilename
 import config
 import database
 from telegram_service import telegram_service
+import otp_service
 
 logger = logging.getLogger("bot_service")
 logging.basicConfig(level=logging.INFO)
@@ -85,16 +86,25 @@ class BotService:
             is_https = web_url.startswith("https://")
             buttons = []
             if is_https:
-                buttons.append([Button.url("🌐 Open Web Drive (Mini App)", web_url)])
+                buttons.append([
+                    Button.url("🌐 Web Drive", web_url),
+                    Button.url("⚡ FastOTP Panel", f"{web_url}/otp")
+                ])
             else:
-                buttons.append([Button.url("🌐 Open Web Dashboard", web_url)])
+                buttons.append([
+                    Button.url("🌐 Web Dashboard", web_url),
+                    Button.url("⚡ FastOTP Panel", f"{web_url}/otp")
+                ])
                 
             buttons.append([
                 Button.inline("📁 Browse Folders", b"action:folders"),
                 Button.inline("📊 Storage Stats", b"action:stats")
             ])
             buttons.append([
-                Button.inline("🌐 Hosted Websites", b"action:websites"),
+                Button.inline("🌐 Hosted Sites", b"action:websites"),
+                Button.inline("⚡ OTP Stats", b"action:otp_stats")
+            ])
+            buttons.append([
                 Button.inline("❓ Help Guide", b"action:help")
             ])
 
@@ -113,6 +123,7 @@ class BotService:
                 "• `/deploy <folder_id_or_name> [slug]` - 🚀 Kisi folder ko instantly live website bana kar deploy karein!\n"
                 "• `/deployments` ya `/sites` - Sabhi live deployed websites aur Mini-Apps ki list dekhein.\n"
                 "• `/undeploy <slug>` - Website deployment ko unpublish / delete karein.\n"
+                "• `/otp` ya `/fastotp [phone]` - ⚡ FastOTP live panel status aur instant SMS/OTP fetch karein!\n"
                 "• `/stats` - Total storage & file count dekhein.\n"
                 "• `/setfolder <id>` - Target folder set karein jisme nayi files aayengi.\n"
                 "• `/resetfolder` - Target folder ko Root par reset karein."
@@ -377,6 +388,72 @@ class BotService:
             text = "🌐 **Live Hosted Websites from Storage:**\n\n" + "\n".join(hosted_sites)
             await event.respond(text)
 
+        # Command: /otp or /fastotp
+        @client.on(events.NewMessage(pattern=r"^/(?:otp|fastotp)(?:\s+(\S+))?"))
+        async def handle_otp_cmd(event):
+            phone_arg = event.pattern_match.group(1)
+            web_url = self.get_web_url()
+            otp_panel_url = f"{web_url}/otp"
+
+            if phone_arg and phone_arg.strip():
+                clean_phone = "".join(filter(str.isdigit, str(phone_arg.strip())))
+                if len(clean_phone) > 10:
+                    clean_phone = clean_phone[-10:]
+                
+                await event.respond(f"🔍 Fetching latest SMS for `{clean_phone}`...")
+                res = await asyncio.to_thread(otp_service.fetch_number_sms_sync, clean_phone)
+                
+                if res.get("ok") and isinstance(res.get("sms"), list):
+                    sms_list = res.get("sms", [])
+                    if not sms_list:
+                        await event.respond(
+                            f"📭 No SMS received yet for `{clean_phone}`.\n\n"
+                            f"🌐 [Open FastOTP Panel]({otp_panel_url})"
+                        )
+                        return
+                    
+                    msg_lines = [f"⚡ **Latest SMS for +91 {clean_phone}:**\n"]
+                    for s in sms_list[:5]:
+                        otp_val = s.get("otp", "")
+                        sender = s.get("sender", "Unknown")
+                        time_str = s.get("timestamp", "")
+                        text_msg = s.get("message", "")
+                        otp_badge = f"\n🔑 **OTP Code:** `{otp_val}`" if otp_val else ""
+                        msg_lines.append(f"📩 **From:** `{sender}` ({time_str}){otp_badge}\n💬 `{text_msg}`\n")
+                    
+                    buttons = [[Button.url("⚡ Open Live Panel", otp_panel_url)]]
+                    await event.respond("\n".join(msg_lines), buttons=buttons)
+                else:
+                    await event.respond(
+                        f"❌ Failed to fetch SMS: {res.get('detail', 'Unknown error')}\n"
+                        f"Check if number exists in `/otp`"
+                    )
+                return
+
+            # No phone arg -> return FastOTP stats & quick link
+            stats_res = await asyncio.to_thread(otp_service.fetch_panels_stats_sync)
+            numbers_res = await asyncio.to_thread(otp_service.fetch_numbers_sync, "2")
+            
+            total_nums = len(numbers_res.get("numbers", [])) if numbers_res.get("ok") else "N/A"
+            active_nums = numbers_res.get("active_count", "N/A") if numbers_res.get("ok") else "N/A"
+            panel_status = "🟢 Connected & Live" if (stats_res.get("ok") or numbers_res.get("ok")) else "⚠️ Checking Upstream"
+            
+            msg = (
+                f"⚡ **FastOTP Live Panel & SMS Hub**\n\n"
+                f"• 📡 **Status:** {panel_status}\n"
+                f"• 📱 **Active SIMs (2 Days):** `{active_nums}`\n"
+                f"• 🔢 **Total Numbers:** `{total_nums}`\n"
+                f"• 🌐 **Cloud URL:** {otp_panel_url}\n\n"
+                f"💡 **SMS Fetch Command:** `/otp <10-digit-phone>`\n"
+                f"Example: `/otp 9876543210`"
+            )
+
+            buttons = [
+                [Button.url("⚡ Open FastOTP Panel", otp_panel_url)],
+                [Button.inline("🔄 Refresh Stats", b"action:otp_stats")]
+            ]
+            await event.respond(msg, buttons=buttons)
+
         # Callback Queries Handler (Inline Buttons)
         @client.on(events.CallbackQuery())
         async def handle_callback_query(event):
@@ -398,6 +475,25 @@ class BotService:
                 )
                 await event.answer()
                 await event.respond(text)
+            elif data == "action:otp_stats":
+                web_url = self.get_web_url()
+                otp_panel_url = f"{web_url}/otp"
+                numbers_res = await asyncio.to_thread(otp_service.fetch_numbers_sync, "2")
+                stats_res = await asyncio.to_thread(otp_service.fetch_panels_stats_sync)
+                total_nums = len(numbers_res.get("numbers", [])) if numbers_res.get("ok") else "N/A"
+                active_nums = numbers_res.get("active_count", "N/A") if numbers_res.get("ok") else "N/A"
+                panel_status = "🟢 Connected & Live" if (stats_res.get("ok") or numbers_res.get("ok")) else "⚠️ Checking Upstream"
+                
+                text = (
+                    f"⚡ **FastOTP Live Panel Statistics**\n\n"
+                    f"• 📡 **Status:** {panel_status}\n"
+                    f"• 📱 **Active SIMs:** `{active_nums}`\n"
+                    f"• 🔢 **Total Numbers:** `{total_nums}`\n"
+                    f"• 🌐 **Panel Link:** {otp_panel_url}"
+                )
+                buttons = [[Button.url("⚡ Open Live Panel", otp_panel_url)]]
+                await event.answer("Stats updated!")
+                await event.respond(text, buttons=buttons)
             elif data == "action:websites":
                 all_folders = await database.get_folders()
                 web_url = self.get_web_url()
