@@ -1569,6 +1569,25 @@ function updateTemplateSelection(radio) {
         parentCard.classList.add('border-purple-500', 'bg-purple-500/15');
         parentCard.classList.remove('border-dark-border', 'bg-slate-900/60');
     }
+
+    const nameInput = document.getElementById('deployStarterName');
+    const slugInput = document.getElementById('deployStarterSlug');
+    const preview = document.getElementById('starterLiveUrlPreview');
+    if (nameInput && slugInput) {
+        if (radio.value === 'fastotp') {
+            nameInput.value = 'FastOTP Live Panel';
+            slugInput.value = 'otp';
+            if (preview) preview.textContent = '/d/otp/';
+        } else if (radio.value === 'portfolio' && (!nameInput.value || nameInput.value.includes('FastOTP') || nameInput.value.includes('Mini App'))) {
+            nameInput.value = 'My Portfolio Site';
+            slugInput.value = 'my-portfolio';
+            if (preview) preview.textContent = '/d/my-portfolio/';
+        } else if (radio.value === 'tg_mini_app' && (!nameInput.value || nameInput.value.includes('FastOTP') || nameInput.value.includes('Portfolio'))) {
+            nameInput.value = 'Telegram Mini App';
+            slugInput.value = 'mini-app';
+            if (preview) preview.textContent = '/d/mini-app/';
+        }
+    }
 }
 
 function autoGenerateSlug(text, targetId) {

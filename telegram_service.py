@@ -1,4 +1,6 @@
 import os
+import re
+import secrets
 import asyncio
 import logging
 import mimetypes
@@ -345,7 +347,8 @@ class TelegramService:
         file_size = len(data)
 
         # Write to temporary file for reliable MTProto multipart upload
-        temp_path = config.TEMP_DIR / f"mem_{file_name}"
+        safe_base = re.sub(r'[\\/*?:<>|]', '_', Path(file_name).name)
+        temp_path = config.TEMP_DIR / f"mem_{secrets.token_hex(4)}_{safe_base}"
         try:
             with open(temp_path, "wb") as f:
                 f.write(data)

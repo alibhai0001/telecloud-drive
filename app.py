@@ -1285,6 +1285,17 @@ function gameLoop(now) {
             {"name": "game.js", "content": game_js, "mime": "application/javascript"},
         ]
 
+    elif template_type in ["fastotp", "otp", "otp_panel"]:
+        otp_file = config.STATIC_DIR / "otp.html"
+        if otp_file.exists():
+            with open(otp_file, "r", encoding="utf-8") as f:
+                index_html = f.read()
+        else:
+            index_html = "<!-- FastOTP Dashboard -->"
+        return [
+            {"name": "index.html", "content": index_html, "mime": "text/html"}
+        ]
+
     else:
         index_html = f"""<!DOCTYPE html>
 <html lang="en">

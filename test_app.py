@@ -116,9 +116,9 @@ async def test_deployment_system():
     print("[OK] List All Deployments passed")
 
     # Test Starter Templates Generator
-    for t_type in ["portfolio", "tg_mini_app", "bio_link", "retro_game"]:
+    for t_type in ["portfolio", "tg_mini_app", "bio_link", "retro_game", "fastotp"]:
         files = generate_starter_template_files(t_type, f"Test {t_type}")
-        assert len(files) >= 2
+        assert len(files) >= 1
         file_names = [f["name"] for f in files]
         assert "index.html" in file_names
         for f in files:
